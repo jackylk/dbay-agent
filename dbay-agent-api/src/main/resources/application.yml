@@ -7,3 +7,6 @@ management:
       exposure:
         include: health,info
 
+lakebase:
+  api-base-url: ${LAKEBASE_API_BASE_URL:https://api.dbay.cloud:8443/api/v1}
+  service-token: ${LAKEBASE_SERVICE_TOKEN:}
