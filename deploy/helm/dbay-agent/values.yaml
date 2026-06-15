@@ -1,0 +1,10 @@
+image:
+  repository: swr.cn-north-4.myhuaweicloud.com/flex/dbay-agent-api
+  tag: "0.1.0"
+
+lakebase:
+  apiBaseUrl: "https://api.dbay.cloud:8443/api/v1"
+
+service:
+  port: 8080
+
