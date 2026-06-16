@@ -9,6 +9,7 @@ NAMESPACE="${NAMESPACE:-dbay-agent}"
 KUBECONFIG="${KUBECONFIG:-$HOME/.kube/cce-dbay-control-plane-config}"
 IMAGE_TAG="${IMAGE_TAG:-$(cd "$PROJECT_DIR" && git rev-parse --short=8 HEAD)}"
 LAKEBASE_API_BASE_URL="${LAKEBASE_API_BASE_URL:-https://api.dbay.cloud:8443/api/v1}"
+export KUBECONFIG
 
 helm upgrade --install "$RELEASE_NAME" "$PROJECT_DIR/deploy/helm/dbay-agent" \
   --namespace "$NAMESPACE" \
