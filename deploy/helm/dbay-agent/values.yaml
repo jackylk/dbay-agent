@@ -1,10 +1,36 @@
 image:
   repository: swr.cn-north-4.myhuaweicloud.com/flex/dbay-agent-api
   tag: "0.1.0"
+  pullPolicy: IfNotPresent
 
 lakebase:
   apiBaseUrl: "https://api.dbay.cloud:8443/api/v1"
+  serviceTokenSecret:
+    enabled: false
+    name: dbay-agent-lakebase-token
+    key: token
 
 service:
+  type: ClusterIP
   port: 8080
+  targetPort: 8080
+  annotations: {}
 
+replicaCount: 1
+
+imagePullSecrets:
+  - name: swr-secret
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
