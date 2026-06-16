@@ -12,13 +12,13 @@ lakebase:
 
 service:
   type: LoadBalancer
-  port: 8080
+  port: 8082
   targetPort: 8080
   annotations: {}
   elb:
-    id: ""
+    id: "46b20c38-5c54-4781-9f00-d25d8c1717a8"
     class: performance
-    autocreate: '{"type":"public","name":"dbay-agent-api-elb","l4_flavor_id":"ec6df27e-8ae9-45e3-828f-a6de45e3e109","available_zone":["cn-north-4a","cn-north-4c"],"elb_virsubnet_ids":["f28729ee-6382-4bbd-90f2-6e8ad5b205af"],"bandwidth_name":"dbay-agent-api-bw","bandwidth_chargemode":"traffic","bandwidth_size":5,"bandwidth_sharetype":"PER","eip_type":"5_sbgp"}'
+    autocreate: ""
 
 replicaCount: 1
 
