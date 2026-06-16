@@ -18,7 +18,7 @@ service:
   elb:
     id: ""
     class: performance
-    autocreate: '{"type":"public","name":"dbay-agent-api-elb","bandwidth_name":"dbay-agent-api-bw","bandwidth_chargemode":"traffic","bandwidth_size":5,"bandwidth_sharetype":"PER","eip_type":"5_sbgp"}'
+    autocreate: '{"type":"public","name":"dbay-agent-api-elb","l4_flavor_id":"ec6df27e-8ae9-45e3-828f-a6de45e3e109","available_zone":["cn-north-4g"],"bandwidth_name":"dbay-agent-api-bw","bandwidth_chargemode":"traffic","bandwidth_size":5,"bandwidth_sharetype":"PER","eip_type":"5_sbgp"}'
 
 replicaCount: 1
 
