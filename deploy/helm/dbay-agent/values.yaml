@@ -11,10 +11,14 @@ lakebase:
     key: token
 
 service:
-  type: ClusterIP
+  type: LoadBalancer
   port: 8080
   targetPort: 8080
   annotations: {}
+  elb:
+    id: ""
+    class: performance
+    autocreate: '{"type":"public","name":"dbay-agent-api-elb","bandwidth_name":"dbay-agent-api-bw","bandwidth_chargemode":"traffic","bandwidth_size":5,"bandwidth_sharetype":"PER","eip_type":"5_sbgp"}'
 
 replicaCount: 1
 
