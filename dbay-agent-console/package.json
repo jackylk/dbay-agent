@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
+    "start": "node server.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -19,4 +20,3 @@
     "vitest": "^3.2.4"
   }
 }
-
