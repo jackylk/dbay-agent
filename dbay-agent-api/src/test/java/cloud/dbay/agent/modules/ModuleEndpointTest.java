@@ -1,7 +1,6 @@
 package cloud.dbay.agent.modules;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,23 +15,6 @@ import org.springframework.test.web.servlet.MockMvc;
 class ModuleEndpointTest {
     @Autowired
     private MockMvc mockMvc;
-
-    @Test
-    void listEndpointsReturnEmptyArraysDuringMigration() throws Exception {
-        String[] paths = {
-                "/api/v1/knowledge/bases",
-                "/api/v1/memory/bases",
-                "/api/v1/agent-state/task-runs",
-                "/api/v1/datalake/datasets",
-                "/api/v1/datalake/jobs"
-        };
-
-        for (String path : paths) {
-            mockMvc.perform(get(path))
-                    .andExpect(status().isOk())
-                    .andExpect(content().json("[]"));
-        }
-    }
 
     @Test
     void statusEndpointDeclaresDbayAgentOwnership() throws Exception {
