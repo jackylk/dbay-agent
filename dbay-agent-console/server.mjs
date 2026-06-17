@@ -31,13 +31,19 @@ async function proxyApi(req, res, url) {
     return
   }
   const target = `${apiBaseUrl}${url.pathname.replace(/^\/agent-api/, '')}${url.search}`
+  const forwardedHeaders = {
+    accept: req.headers.accept || 'application/json',
+    'content-type': req.headers['content-type'] || 'application/json',
+  }
+  for (const header of ['authorization', 'x-dbay-tenant-id', 'x-tenant-id', 'x-lakeon-tenant-id']) {
+    if (req.headers[header]) {
+      forwardedHeaders[header] = req.headers[header]
+    }
+  }
   try {
     const upstream = await fetch(target, {
       method: req.method,
-      headers: {
-        accept: req.headers.accept || 'application/json',
-        'content-type': req.headers['content-type'] || 'application/json',
-      },
+      headers: forwardedHeaders,
       body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req,
       duplex: 'half',
     })
