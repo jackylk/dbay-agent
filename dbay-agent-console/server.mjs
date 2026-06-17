@@ -49,6 +49,7 @@ async function proxyApi(req, res, url) {
     })
     res.writeHead(upstream.status, {
       'content-type': upstream.headers.get('content-type') || 'application/json',
+      'x-dbay-agent-console-proxy': 'tenant-headers-v1',
     })
     res.end(Buffer.from(await upstream.arrayBuffer()))
   } catch (error) {
