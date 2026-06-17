@@ -9,7 +9,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "agent_task_runs")
+@Table(name = "dbay_agent_task_runs")
 public class AgentTaskRunEntity {
     @Id
     private String id;

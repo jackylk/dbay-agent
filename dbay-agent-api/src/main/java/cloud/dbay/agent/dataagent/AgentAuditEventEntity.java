@@ -10,7 +10,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "agent_audit_events")
+@Table(name = "dbay_agent_audit_events")
 public class AgentAuditEventEntity {
     @Id
     private String id;
