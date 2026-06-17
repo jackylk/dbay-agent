@@ -22,12 +22,7 @@ public class LakebaseModuleProxyController {
     }
 
     @RequestMapping({
-            "/api/v1/knowledge/**",
-            "/api/v1/memory/**",
-            "/api/v1/datalake/**",
-            "/api/v1/pipelines/**",
-            "/api/v1/pipeline-runs/**",
-            "/api/v1/pipeline-components/**"
+            "/api/v1/lakebase-legacy-agent/**"
     })
     public ResponseEntity<byte[]> forward(
             HttpMethod method,
