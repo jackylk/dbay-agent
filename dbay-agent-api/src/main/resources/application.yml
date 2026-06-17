@@ -12,7 +12,6 @@ spring:
     url: ${DBAY_AGENT_DB_URL:jdbc:h2:file:/tmp/dbay-agent/agent-state;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE}
     username: ${DBAY_AGENT_DB_USER:sa}
     password: ${DBAY_AGENT_DB_PASSWORD:}
-    driver-class-name: ${DBAY_AGENT_DB_DRIVER:org.h2.Driver}
   jpa:
     hibernate:
       ddl-auto: ${DBAY_AGENT_JPA_DDL_AUTO:update}
