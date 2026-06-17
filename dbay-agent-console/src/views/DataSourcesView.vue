@@ -16,7 +16,7 @@
         <EmptyState title="即将接入" description="文档、图片、音频和视频会被加工后写入 Knowledge、Memory 或 Datalake。" />
       </ModulePanel>
       <ModulePanel title="DBay 资产" description="来自 dbay.cloud 的 Lakebase 数据库、FS 和数据湖资产。">
-        <EmptyState title="依赖 Lakebase API" description="通过 dbay-agent API 读取 dbay.cloud 的资产目录，不直接访问 Lakebase RDS。" />
+        <EmptyState title="自有元数据" description="数据源注册信息写入 dbay-agent RDS；Lakebase 资产通过 dbay.cloud API 读取。" />
       </ModulePanel>
     </div>
   </div>

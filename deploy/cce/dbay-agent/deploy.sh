@@ -4,6 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 RELEASE_NAME="${RELEASE_NAME:-dbay-agent}"
 NAMESPACE="${NAMESPACE:-dbay-agent}"
 KUBECONFIG="${KUBECONFIG:-$HOME/.kube/cce-dbay-agent-config}"

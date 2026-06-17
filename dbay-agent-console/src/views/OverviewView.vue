@@ -25,7 +25,7 @@
       </ModulePanel>
     </div>
 
-    <ModulePanel title="运行状态" description="dbay-agent API 与它依赖的 Lakebase API。">
+    <ModulePanel title="运行状态" description="dbay-agent API、自有元数据 RDS 与它依赖的 Lakebase API。">
       <div class="health-grid">
         <div class="health-row">
           <span>dbay-agent API</span>
@@ -34,6 +34,10 @@
         <div class="health-row">
           <span>Lakebase API</span>
           <StatusPill :status="lakebaseHealth.data.value?.status || (lakebaseHealth.loading.value ? 'PENDING' : 'FAILED')" />
+        </div>
+        <div class="health-row">
+          <span>Agent Metadata RDS</span>
+          <StatusPill :status="agentHealth.data.value?.status || (agentHealth.loading.value ? 'PENDING' : 'FAILED')" />
         </div>
       </div>
     </ModulePanel>

@@ -18,7 +18,7 @@
     <ModulePanel title="数据集" description="数据库导出、作业产出和外部文件注册后的数据资产。">
       <div v-if="datasetsState.loading.value" class="loading">加载中...</div>
       <div v-else-if="datasetsState.error.value">
-        <EmptyState title="Datalake 数据集 API 尚未接入 dbay-agent" :description="datasetsState.error.value" />
+        <EmptyState title="Datalake 数据集 API 暂不可用" :description="datasetsState.error.value" />
       </div>
       <div v-else-if="!datasets.length">
         <EmptyState title="还没有数据集" description="后续会恢复数据集详情、版本和导入流程。" />
@@ -40,7 +40,7 @@
     <ModulePanel title="作业" description="Ray、Python 和 Notebook 背景作业。">
       <div v-if="jobsState.loading.value" class="loading">加载中...</div>
       <div v-else-if="jobsState.error.value">
-        <EmptyState title="Datalake 作业 API 尚未接入 dbay-agent" :description="jobsState.error.value" />
+        <EmptyState title="Datalake 作业 API 暂不可用" :description="jobsState.error.value" />
       </div>
       <div v-else-if="!jobs.length">
         <EmptyState title="还没有作业" description="后续会恢复作业提交、日志和重跑。" />
