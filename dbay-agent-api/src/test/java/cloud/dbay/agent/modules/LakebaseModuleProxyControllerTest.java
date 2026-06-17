@@ -41,6 +41,12 @@ class LakebaseModuleProxyControllerTest {
     }
 
     @Test
+    void doesNotClaimAgentStatePaths() throws Exception {
+        mockMvc.perform(get("/api/v1/agent-state/task-runs"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void keepsStatusEndpointLocal() throws Exception {
         mockMvc.perform(get("/api/v1/data-agent/status"))
                 .andExpect(status().isOk())

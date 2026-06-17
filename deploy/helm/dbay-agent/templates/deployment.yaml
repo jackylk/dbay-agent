@@ -29,13 +29,22 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "dbay-agent.fullname" . }}-config
-          {{- if .Values.lakebase.serviceTokenSecret.enabled }}
+          {{- if or .Values.lakebase.serviceTokenSecret.enabled .Values.database.password }}
           env:
+            {{- if .Values.database.password }}
+            - name: DBAY_AGENT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dbay-agent.fullname" . }}-secrets
+                  key: database-password
+            {{- end }}
+            {{- if .Values.lakebase.serviceTokenSecret.enabled }}
             - name: LAKEBASE_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.lakebase.serviceTokenSecret.name }}
                   key: {{ .Values.lakebase.serviceTokenSecret.key }}
+            {{- end }}
           {{- end }}
           readinessProbe:
             httpGet:

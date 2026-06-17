@@ -7,6 +7,21 @@ management:
       exposure:
         include: health,info
 
+spring:
+  datasource:
+    url: ${DBAY_AGENT_DB_URL:jdbc:h2:file:/tmp/dbay-agent/agent-state;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE}
+    username: ${DBAY_AGENT_DB_USER:sa}
+    password: ${DBAY_AGENT_DB_PASSWORD:}
+    driver-class-name: ${DBAY_AGENT_DB_DRIVER:org.h2.Driver}
+  jpa:
+    hibernate:
+      ddl-auto: ${DBAY_AGENT_JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
 lakebase:
   api-base-url: ${LAKEBASE_API_BASE_URL:https://api.dbay.cloud:8443/api/v1}
   service-token: ${LAKEBASE_SERVICE_TOKEN:}

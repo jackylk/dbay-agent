@@ -10,6 +10,13 @@ lakebase:
     name: dbay-agent-lakebase-token
     key: token
 
+database:
+  url: ""
+  user: ""
+  password: ""
+  driver: ""
+  ddlAuto: "update"
+
 service:
   type: LoadBalancer
   port: 8082

@@ -25,7 +25,6 @@ public class LakebaseModuleProxyController {
             "/api/v1/knowledge/**",
             "/api/v1/memory/**",
             "/api/v1/datalake/**",
-            "/api/v1/agent-state/**",
             "/api/v1/pipelines/**",
             "/api/v1/pipeline-runs/**",
             "/api/v1/pipeline-components/**"

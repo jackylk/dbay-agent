@@ -6,3 +6,13 @@ metadata:
     {{- include "dbay-agent.labels" . | nindent 4 }}
 data:
   LAKEBASE_API_BASE_URL: {{ .Values.lakebase.apiBaseUrl | quote }}
+  {{- if .Values.database.url }}
+  DBAY_AGENT_DB_URL: {{ .Values.database.url | quote }}
+  {{- end }}
+  {{- if .Values.database.user }}
+  DBAY_AGENT_DB_USER: {{ .Values.database.user | quote }}
+  {{- end }}
+  {{- if .Values.database.driver }}
+  DBAY_AGENT_DB_DRIVER: {{ .Values.database.driver | quote }}
+  {{- end }}
+  DBAY_AGENT_JPA_DDL_AUTO: {{ .Values.database.ddlAuto | default "update" | quote }}
