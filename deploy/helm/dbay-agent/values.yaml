@@ -45,3 +45,9 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 3
   targetCPUUtilizationPercentage: 70
+
+workloads:
+  clusterOwner: dbay-agent
+  clusterName: dbay-agent-cce
+  namespace: dbay-agent-workers
+  backend: CCI

@@ -24,3 +24,10 @@ spring:
 lakebase:
   api-base-url: ${LAKEBASE_API_BASE_URL:https://api.dbay.cloud:8443/api/v1}
   service-token: ${LAKEBASE_SERVICE_TOKEN:}
+
+dbay-agent:
+  workloads:
+    cluster-owner: ${DBAY_AGENT_WORKLOAD_CLUSTER_OWNER:dbay-agent}
+    cluster-name: ${DBAY_AGENT_WORKLOAD_CLUSTER_NAME:dbay-agent-cce}
+    namespace: ${DBAY_AGENT_WORKLOAD_NAMESPACE:dbay-agent-workers}
+    backend: ${DBAY_AGENT_WORKLOAD_BACKEND:CCI}

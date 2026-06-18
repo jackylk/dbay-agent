@@ -16,3 +16,7 @@ data:
   DBAY_AGENT_DB_DRIVER: {{ .Values.database.driver | quote }}
   {{- end }}
   DBAY_AGENT_JPA_DDL_AUTO: {{ .Values.database.ddlAuto | default "update" | quote }}
+  DBAY_AGENT_WORKLOAD_CLUSTER_OWNER: {{ .Values.workloads.clusterOwner | default "dbay-agent" | quote }}
+  DBAY_AGENT_WORKLOAD_CLUSTER_NAME: {{ .Values.workloads.clusterName | default "dbay-agent-cce" | quote }}
+  DBAY_AGENT_WORKLOAD_NAMESPACE: {{ .Values.workloads.namespace | default "dbay-agent-workers" | quote }}
+  DBAY_AGENT_WORKLOAD_BACKEND: {{ .Values.workloads.backend | default "CCI" | quote }}
