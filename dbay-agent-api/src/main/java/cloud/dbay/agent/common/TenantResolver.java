@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 public final class TenantResolver {
     private TenantResolver() {}
@@ -18,9 +20,12 @@ public final class TenantResolver {
         }
         String auth = request.getHeader("Authorization");
         if (auth != null && !auth.isBlank()) {
+            if (!auth.startsWith("Bearer lk_")) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid API key");
+            }
             return "auth_" + sha256(auth).substring(0, 16);
         }
-        return "anonymous";
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
     }
 
     private static String firstNonBlank(String... values) {

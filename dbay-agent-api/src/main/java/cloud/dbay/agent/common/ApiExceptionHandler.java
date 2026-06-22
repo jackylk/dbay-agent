@@ -3,6 +3,7 @@ package cloud.dbay.agent.common;
 import jakarta.persistence.EntityNotFoundException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -28,8 +29,8 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(ResponseStatusException.class)
-    @ResponseStatus
-    public Map<String, Object> responseStatus(ResponseStatusException e) {
-        return Map.of("error", Map.of("code", e.getStatusCode().toString(), "message", e.getReason()));
+    public ResponseEntity<Map<String, Object>> responseStatus(ResponseStatusException e) {
+        return ResponseEntity.status(e.getStatusCode())
+                .body(Map.of("error", Map.of("code", e.getStatusCode().toString(), "message", e.getReason())));
     }
 }
