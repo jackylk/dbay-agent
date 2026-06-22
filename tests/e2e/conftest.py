@@ -1,17 +1,223 @@
+import sys
 import os
+import random
 import time
+import subprocess
 
 import httpx
 import pytest
 
+# Allow importing dbay_cli without pip install -e
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "dbay-cli"))
 
-BASE_URL = os.environ.get("DBAY_AGENT_ENDPOINT", "https://dbay-agent.up.railway.app/agent-api").rstrip("/")
-HTTP_TIMEOUT = float(os.environ.get("DBAY_AGENT_E2E_TIMEOUT", "30"))
+from dbay_cli.client import DbayClient  # noqa: E402
+
+ENDPOINT = os.environ.get("DBAY_ENDPOINT", os.environ.get("DBAY_AGENT_ENDPOINT", "https://dbay-agent.up.railway.app/agent-api"))
+ADMIN_TOKEN = os.environ.get("DBAY_ADMIN_TOKEN", "lakeon-sre-2026")
+HTTP_TIMEOUT = float(os.environ.get("DBAY_AGENT_E2E_TIMEOUT", "300"))
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def poll_until(fetch_fn, condition, timeout=120, interval=3):
+    """Poll fetch_fn() until condition(result) is True or timeout expires."""
+    deadline = time.time() + timeout
+    result = None
+    while time.time() < deadline:
+        result = fetch_fn()
+        if condition(result):
+            return result
+        time.sleep(interval)
+    raise TimeoutError(f"Condition not met within {timeout}s, last result: {result}")
+
+
+def run_psql(connstr: str, sql: str, password: str = None) -> str:
+    """Run a SQL statement via psql subprocess and return stdout.
+
+    Automatically appends ``sslmode=require`` if not present and sets
+    ``no_proxy=pg.dbay.cloud`` so that a local HTTP proxy does not
+    interfere with the PostgreSQL connection.
+    """
+    env = {**os.environ, "no_proxy": "pg.dbay.cloud"}
+    if password:
+        env["PGPASSWORD"] = password
+
+    # Ensure sslmode=require is present
+    if "sslmode=" not in connstr:
+        sep = "&" if "?" in connstr else "?"
+        connstr += f"{sep}sslmode=require"
+
+    result = subprocess.run(
+        ["psql", connstr, "-c", sql, "-t", "-A"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"psql failed: {result.stderr}")
+    return result.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Session-start cleanup: delete stale e2e tenants from previous failed runs
+# ---------------------------------------------------------------------------
+
+def _cleanup_stale_tenants():
+    """Delete test tenants older than 1 hour and expired invite codes.
+    Prevents accumulation from crashed runs."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
+        tenants = admin._request("GET", "/admin/tenants")
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        stale = []
+        for t in tenants:
+            name = t.get("name", "")
+            # Only clean up test tenants (e2e-*, dbg*, test*, kb-debug-*, etc.)
+            if not any(name.startswith(p) for p in ("e2e-", "dbg", "test", "kb-debug", "kb-0",
+                                                      "debug", "compute-test", "sql-test",
+                                                      "ext-test", "url-", "export-debug",
+                                                      "quota-", "memtest", "wiki-e2e",
+                                                      "pyscaler-e2e")):
+                continue
+            created = t.get("created_at", "")
+            if created:
+                try:
+                    ct = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if ct < cutoff:
+                        stale.append(t["id"])
+                except (ValueError, KeyError):
+                    pass
+        if stale:
+            for i in range(0, len(stale), 20):
+                admin.admin_batch_delete_tenants(stale[i:i+20])
+            print(f"\n🧹 Cleaned up {len(stale)} stale test tenants")
+
+        # Clean up expired/used invite codes
+        codes = admin._request("GET", "/admin/invite-codes")
+        expired = [c["code"] for c in codes if not c.get("valid", True)]
+        for code in expired:
+            try:
+                admin._request("DELETE", f"/admin/invite-codes/{code}")
+            except Exception:
+                pass
+        if expired:
+            print(f"🧹 Cleaned up {len(expired)} expired invite codes")
+    except Exception as e:
+        print(f"\n⚠️  Stale tenant cleanup failed: {e}")
+
+
+_cleanup_stale_tenants()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+def _create_tenant_with_invite(endpoint: str, admin_token: str,
+                                username: str, password: str, name: str) -> tuple:
+    """Create invite code via admin API, then register tenant.
+    Returns (DbayClient, tenant_dict).
+    """
+    admin = DbayClient(endpoint=endpoint, api_key=admin_token)
+    invite = admin.admin_create_invite_code(max_uses=1)
+    invite_code = invite.get("code")
+
+    # Use a unique spoofed IP per session to avoid per-IP rate limits on /tenants
+    fake_ip = f"10.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
+    reg_client = DbayClient(endpoint=endpoint, extra_headers={"X-Forwarded-For": fake_ip})
+    tenant = reg_client.create_tenant(
+        username=username,
+        password=password,
+        name=name,
+        invite_code=invite_code,
+    )
+    client = DbayClient(endpoint=endpoint, api_key=tenant["api_key"])
+
+    # Full-suite E2E creates many temporary backing databases across
+    # database, branch, KB, memory, PITR, and version fixtures.
+    tenant_id = tenant.get("id")
+    if tenant_id:
+        admin.admin_update_quota(tenant_id, max_databases=200)
+
+    return client, tenant
+
+
+@pytest.fixture(scope="session")
+def e2e_tenant():
+    """Create a disposable test tenant for the entire session.
+
+    Yields a dict with keys: client, api_key, username, password, and
+    anything else the create_tenant API returns.
+
+    On teardown, deletes every database owned by the tenant.
+    """
+    ts = int(time.time())
+    username = f"e2e-{ts}"
+    password = f"E2eTest@{ts}"
+
+    client, tenant = _create_tenant_with_invite(
+        ENDPOINT, ADMIN_TOKEN, username, password, f"E2E Test {ts}"
+    )
+
+    info = {
+        "client": client,
+        "username": username,
+        "password": password,
+        **tenant,
+    }
+
+    yield info
+
+    # Cleanup: delete all knowledge bases created during the session
+    try:
+        for kb in client.list_knowledge_bases():
+            try:
+                client.delete_knowledge_base(kb["id"])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Cleanup: delete all memory bases created during the session
+    try:
+        for mb in client.list_memory_bases():
+            try:
+                client.delete_memory_base(mb["id"])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Cleanup: delete all databases created during the session
+    for db in client.list_databases():
+        try:
+            client.delete_database(db["id"])
+        except Exception:
+            pass
+
+    # Cleanup: delete the tenant itself via admin API
+    tenant_id = info.get("id")
+    if tenant_id:
+        try:
+            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
+            admin.admin_batch_delete_tenants([tenant_id])
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session")
+def e2e_client(e2e_tenant):
+    """Return the authenticated DbayClient from e2e_tenant."""
+    return e2e_tenant["client"]
 
 
 @pytest.fixture(scope="session")
 def agent_base_url():
-    return f"{BASE_URL}/api/v1"
+    return f"{ENDPOINT.rstrip('/')}/api/v1"
 
 
 @pytest.fixture
@@ -31,3 +237,33 @@ def client():
 def assert_ok(response):
     assert response.status_code < 400, response.text
     return response.json()
+
+
+@pytest.fixture
+def test_db(e2e_client):
+    """Create a temporary database, poll until RUNNING, yield it, then delete.
+
+    The returned dict includes the ``password`` field captured from the
+    creation response (GET won't return it).
+    """
+    db = e2e_client.create_database(name=f"e2e-db-{int(time.time())}")
+    # Capture password from creation response before polling overwrites it
+    creation_password = db.get("password")
+
+    db = poll_until(
+        lambda: e2e_client.get_database(db["id"]),
+        condition=lambda d: d["status"] in ("RUNNING", "ERROR"),
+        timeout=180,
+        interval=3,
+    )
+    assert db["status"] == "RUNNING", f"Database creation failed: {db}"
+
+    # Re-attach password since GET doesn't return it
+    db["password"] = creation_password
+
+    yield db
+
+    try:
+        e2e_client.delete_database(db["id"])
+    except Exception:
+        pass
