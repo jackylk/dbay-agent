@@ -13,13 +13,19 @@ import time
 import pytest
 
 from dbay_cli.client import DbayClient, DbayApiError
-from conftest import ENDPOINT, ADMIN_TOKEN, poll_until, _create_tenant_with_invite
+from conftest import ENDPOINT, poll_until
 
 SKIP_COMPLETION = os.environ.get("DATALAKE_SKIP_COMPLETION", "0") == "1"
 JOB_COMPLETION_TIMEOUT = int(os.environ.get("JOB_COMPLETION_TIMEOUT", "180"))
 
 VALID_INITIAL_STATUSES = {"PENDING", "STARTING", "RUNNING", "FAILED"}
 TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED"}
+
+
+def _agent_tenant_client(prefix: str) -> DbayClient:
+    """Datalake is owned by dbay-agent, so these E2E tenants do not need Lakebase registration."""
+    tenant_id = f"agent-dl-{prefix}-{int(time.time() * 1000)}"
+    return DbayClient(endpoint=ENDPOINT, extra_headers={"X-DBay-Tenant-Id": tenant_id})
 
 
 def _submit_sleep_job(client: DbayClient, name: str, sleep_seconds: int = 300) -> dict:
@@ -53,17 +59,7 @@ class TestDatalakeCRUD:
 
     @pytest.fixture(scope="class")
     def client(self):
-        ts = int(time.time())
-        c, t = _create_tenant_with_invite(
-            ENDPOINT, ADMIN_TOKEN,
-            f"e2e-dl-crud-{ts}", f"DlCrud@{ts}", f"DL CRUD {ts}",
-        )
-        yield c
-        try:
-            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
-            admin.admin_batch_delete_tenants([t["id"]])
-        except Exception:
-            pass
+        yield _agent_tenant_client("crud")
 
     @pytest.fixture(scope="class")
     def submitted_job(self, client):
@@ -178,31 +174,11 @@ class TestDatalakeTenantIsolation:
 
     @pytest.fixture(scope="class")
     def tenant_a(self):
-        ts = int(time.time())
-        c, t = _create_tenant_with_invite(
-            ENDPOINT, ADMIN_TOKEN,
-            f"e2e-dl-ta-{ts}", f"DlTa@{ts}", f"DL-A {ts}",
-        )
-        yield c
-        try:
-            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
-            admin.admin_batch_delete_tenants([t["id"]])
-        except Exception:
-            pass
+        yield _agent_tenant_client("ta")
 
     @pytest.fixture(scope="class")
     def tenant_b(self):
-        ts = int(time.time())
-        c, t = _create_tenant_with_invite(
-            ENDPOINT, ADMIN_TOKEN,
-            f"e2e-dl-tb-{ts}", f"DlTb@{ts}", f"DL-B {ts}",
-        )
-        yield c
-        try:
-            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
-            admin.admin_batch_delete_tenants([t["id"]])
-        except Exception:
-            pass
+        yield _agent_tenant_client("tb")
 
     @pytest.fixture(scope="class")
     def jobs(self, tenant_a, tenant_b):
@@ -273,17 +249,7 @@ class TestDatalakeAuthAndValidation:
 
     @pytest.fixture(scope="class")
     def client(self):
-        ts = int(time.time())
-        c, t = _create_tenant_with_invite(
-            ENDPOINT, ADMIN_TOKEN,
-            f"e2e-dl-val-{ts}", f"DlVal@{ts}", f"DL VAL {ts}",
-        )
-        yield c
-        try:
-            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
-            admin.admin_batch_delete_tenants([t["id"]])
-        except Exception:
-            pass
+        yield _agent_tenant_client("val")
 
     # ── DL-E2E-020: No auth → 401 ─────────────────────────────────────────────
 
@@ -344,17 +310,7 @@ class TestDatalakeJobCompletion:
 
     @pytest.fixture(scope="class")
     def client(self):
-        ts = int(time.time())
-        c, t = _create_tenant_with_invite(
-            ENDPOINT, ADMIN_TOKEN,
-            f"e2e-dl-comp-{ts}", f"DlComp@{ts}", f"DL COMP {ts}",
-        )
-        yield c
-        try:
-            admin = DbayClient(endpoint=ENDPOINT, api_key=ADMIN_TOKEN)
-            admin.admin_batch_delete_tenants([t["id"]])
-        except Exception:
-            pass
+        yield _agent_tenant_client("comp")
 
     @pytest.fixture(scope="class")
     def completed_job(self, client):
