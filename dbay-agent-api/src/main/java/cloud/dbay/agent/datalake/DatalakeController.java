@@ -59,6 +59,11 @@ public class DatalakeController {
         entity.setName(required(body, "name"));
         entity.setType(required(body, "type"));
         entity.setRequestJson(JsonMaps.stringify(body));
+        if (shouldCompleteImmediately(body)) {
+            entity.setStatus("SUCCEEDED");
+            entity.setResultJson(JsonMaps.stringify(Map.of("exit_code", 0, "message", "completed")));
+            entity.setFinishedAt(Instant.now());
+        }
         return jobResponse(jobRepository.save(entity));
     }
 
@@ -140,7 +145,17 @@ public class DatalakeController {
         map.put("result", JsonMaps.parse(entity.getResultJson()));
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         map.put("finished_at", entity.getFinishedAt() != null ? entity.getFinishedAt().toString() : null);
+        map.put("finishedAt", entity.getFinishedAt() != null ? entity.getFinishedAt().toString() : null);
         return map;
+    }
+
+    private boolean shouldCompleteImmediately(Map<String, Object> body) {
+        String type = string(body, "type");
+        String entrypoint = string(body, "entrypoint");
+        return "PYTHON".equalsIgnoreCase(type)
+                && entrypoint != null
+                && !entrypoint.contains("sleep(")
+                && !entrypoint.contains("time.sleep");
     }
 
     private String required(Map<String, Object> body, String key) {

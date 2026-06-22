@@ -128,7 +128,10 @@ def _create_tenant_with_invite(endpoint: str, admin_token: str,
 
     # Use a unique spoofed IP per session to avoid per-IP rate limits on /tenants
     fake_ip = f"10.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
-    reg_client = DbayClient(endpoint=endpoint, extra_headers={"X-Forwarded-For": fake_ip})
+    reg_client = DbayClient(endpoint=endpoint, extra_headers={
+        "X-Forwarded-For": fake_ip,
+        "X-DBay-Test-Forwarded-For": fake_ip,
+    })
     tenant = reg_client.create_tenant(
         username=username,
         password=password,

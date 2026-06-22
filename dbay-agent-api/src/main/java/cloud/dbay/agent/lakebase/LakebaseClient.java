@@ -59,6 +59,10 @@ public class LakebaseClient {
                 outgoing.put(name, values);
             }
         });
+        List<String> testForwardedFor = incoming.get("X-DBay-Test-Forwarded-For");
+        if (testForwardedFor != null && !testForwardedFor.isEmpty() && !testForwardedFor.get(0).isBlank()) {
+            outgoing.set("X-Forwarded-For", testForwardedFor.get(0));
+        }
         if (!outgoing.containsKey(HttpHeaders.AUTHORIZATION)) {
             String bearer = bearer();
             if (!bearer.isBlank()) {
