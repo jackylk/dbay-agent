@@ -25,10 +25,22 @@ public class DatalakeDatasetEntity {
     private String name;
 
     @Column(nullable = false, length = 32)
-    private String status = "READY";
+    private String status = "DRAFT";
 
     @Column(name = "source_type", length = 64)
-    private String sourceType = "OBS";
+    private String sourceType = "DB_EXPORT";
+
+    @Column(name = "database_id", length = 128)
+    private String databaseId;
+
+    @Column(name = "query_mode", length = 64)
+    private String queryMode;
+
+    @Column(name = "request_json", columnDefinition = "TEXT")
+    private String requestJson;
+
+    @Column(name = "obs_path", length = 1024)
+    private String obsPath;
 
     @Column(name = "row_count")
     private Long rowCount = 0L;
@@ -55,6 +67,14 @@ public class DatalakeDatasetEntity {
     public void setStatus(String status) { this.status = status; }
     public String getSourceType() { return sourceType; }
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
+    public String getDatabaseId() { return databaseId; }
+    public void setDatabaseId(String databaseId) { this.databaseId = databaseId; }
+    public String getQueryMode() { return queryMode; }
+    public void setQueryMode(String queryMode) { this.queryMode = queryMode; }
+    public String getRequestJson() { return requestJson; }
+    public void setRequestJson(String requestJson) { this.requestJson = requestJson; }
+    public String getObsPath() { return obsPath; }
+    public void setObsPath(String obsPath) { this.obsPath = obsPath; }
     public Long getRowCount() { return rowCount; }
     public void setRowCount(Long rowCount) { this.rowCount = rowCount; }
     public Long getSizeBytes() { return sizeBytes; }
