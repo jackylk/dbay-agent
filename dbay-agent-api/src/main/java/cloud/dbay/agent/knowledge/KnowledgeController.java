@@ -291,7 +291,7 @@ public class KnowledgeController {
                                       @RequestBody byte[] body) {
         KnowledgeDocumentEntity doc = documentRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
-        doc.setContent(new String(body, java.nio.charset.StandardCharsets.UTF_8));
+        doc.setContent(uploadText(body));
         documentRepository.save(doc);
         return Map.of("document_id", id, "status", "uploaded");
     }
@@ -934,6 +934,13 @@ public class KnowledgeController {
 
     private String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    private String uploadText(byte[] body) {
+        if (body == null || body.length == 0) {
+            return "";
+        }
+        return new String(body, java.nio.charset.StandardCharsets.UTF_8).replace("\u0000", "");
     }
 
     private String firstLine(String value) {
