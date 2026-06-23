@@ -632,6 +632,13 @@ public class KnowledgeController {
 
     private void requireAdmin(HttpServletRequest request) {
         String token = request.getHeader("X-Admin-Token");
+        String authorization = request.getHeader("Authorization");
+        if ((token == null || token.isBlank()) && authorization != null && authorization.startsWith("Bearer ")) {
+            String bearer = authorization.substring("Bearer ".length()).trim();
+            if (!bearer.startsWith("lk_")) {
+                token = bearer;
+            }
+        }
         if (token == null || token.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Admin token required");
         }
