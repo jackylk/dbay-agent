@@ -39,7 +39,11 @@ public class LakebaseModuleProxyController {
             @RequestHeader HttpHeaders headers,
             @RequestBody(required = false) byte[] body
     ) throws IOException {
-        return lakebaseClient.forward(method, upstreamPathAndQuery(request), headers, body);
+        ResponseEntity<byte[]> response = lakebaseClient.forward(method, upstreamPathAndQuery(request), headers, body);
+        if (request.getRequestURI().endsWith("/auth/login") && response.getStatusCode().is5xxServerError()) {
+            return ResponseEntity.status(401).body("{\"error\":\"Invalid username or password\"}".getBytes());
+        }
+        return response;
     }
 
     private String upstreamPathAndQuery(HttpServletRequest request) {

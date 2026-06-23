@@ -12,8 +12,10 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -106,13 +108,87 @@ public class KnowledgeController {
     }
 
     @GetMapping("/documents")
-    public List<Map<String, Object>> listDocuments(HttpServletRequest request, @org.springframework.web.bind.annotation.RequestParam(name = "kb_id") String kbId) {
+    public List<Map<String, Object>> listDocuments(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
         String tenantId = TenantResolver.resolve(request);
         getBaseForTenant(tenantId, kbId);
         return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
                 .stream()
                 .map(this::documentResponse)
                 .toList();
+    }
+
+    @GetMapping("/documents/{id}")
+    public Map<String, Object> getDocument(HttpServletRequest request, @PathVariable String id) {
+        String tenantId = TenantResolver.resolve(request);
+        return documentResponse(documentRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id)));
+    }
+
+    @DeleteMapping("/documents/{id}")
+    public Map<String, Object> deleteDocument(HttpServletRequest request, @PathVariable String id) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeDocumentEntity doc = documentRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
+        documentRepository.delete(doc);
+        repository.findByIdAndTenantId(doc.getKbId(), tenantId).ifPresent(kb -> {
+            kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(tenantId, doc.getKbId()));
+            repository.save(kb);
+        });
+        return Map.of("status", "deleted");
+    }
+
+    @GetMapping("/upload-url")
+    public Map<String, Object> uploadUrl(HttpServletRequest request,
+                                         @RequestParam(name = "kb_id") String kbId,
+                                         @RequestParam String filename) {
+        String tenantId = TenantResolver.resolve(request);
+        getBaseForTenant(tenantId, kbId);
+        KnowledgeDocumentEntity doc = new KnowledgeDocumentEntity();
+        doc.setTenantId(tenantId);
+        doc.setKbId(kbId);
+        doc.setTitle(filename);
+        doc.setContent("");
+        doc.setStatus("PENDING");
+        KnowledgeDocumentEntity saved = documentRepository.save(doc);
+        return Map.of(
+                "document_id", saved.getId(),
+                "filename", filename,
+                "upload_url", publicBaseUrl(request) + "/knowledge/uploads/" + saved.getId(),
+                "expires_in", 3600
+        );
+    }
+
+    @PutMapping("/uploads/{id}")
+    public Map<String, Object> upload(@PathVariable String id,
+                                      @RequestBody byte[] body) {
+        KnowledgeDocumentEntity doc = documentRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
+        doc.setContent(new String(body, java.nio.charset.StandardCharsets.UTF_8));
+        documentRepository.save(doc);
+        return Map.of("document_id", id, "status", "uploaded");
+    }
+
+    @PostMapping("/documents/{id}/process")
+    public Map<String, Object> processDocument(HttpServletRequest request, @PathVariable String id) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeDocumentEntity doc = documentRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
+        if (!"READY".equals(doc.getStatus())) {
+            KnowledgeChunkEntity chunk = new KnowledgeChunkEntity();
+            chunk.setTenantId(tenantId);
+            chunk.setKbId(doc.getKbId());
+            chunk.setDocumentId(doc.getId());
+            chunk.setChunkIndex(0);
+            chunk.setContent(safe(doc.getContent()));
+            chunkRepository.save(chunk);
+            doc.setStatus("READY");
+            documentRepository.save(doc);
+        }
+        repository.findByIdAndTenantId(doc.getKbId(), tenantId).ifPresent(kb -> {
+            kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(tenantId, doc.getKbId()));
+            repository.save(kb);
+        });
+        return documentResponse(doc);
     }
 
     @PostMapping("/search")
@@ -192,6 +268,7 @@ public class KnowledgeController {
         map.put("type", entity.getType());
         map.put("status", entity.getStatus());
         map.put("document_count", entity.getDocumentCount());
+        map.put("database_id", "agent-" + entity.getId());
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         map.put("updated_at", entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null);
         return map;
@@ -216,7 +293,9 @@ public class KnowledgeController {
         map.put("tenant_id", doc.getTenantId());
         map.put("kb_id", doc.getKbId());
         map.put("title", doc.getTitle());
+        map.put("filename", doc.getTitle());
         map.put("status", doc.getStatus());
+        map.put("chunks_count", chunkRepository.countByTenantIdAndKbIdAndDocumentId(doc.getTenantId(), doc.getKbId(), doc.getId()));
         map.put("tags", readTags(doc.getTagsJson()));
         map.put("created_at", doc.getCreatedAt() != null ? doc.getCreatedAt().toString() : null);
         map.put("updated_at", doc.getUpdatedAt() != null ? doc.getUpdatedAt().toString() : null);
@@ -261,5 +340,21 @@ public class KnowledgeController {
         } catch (Exception ignored) {
             return List.of();
         }
+    }
+
+    private String publicBaseUrl(HttpServletRequest request) {
+        String proto = request.getHeader("X-Forwarded-Proto");
+        String host = request.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) {
+            host = request.getHeader("Host");
+        }
+        if (proto == null || proto.isBlank()) {
+            proto = request.getScheme();
+        }
+        String prefix = request.getHeader("X-Forwarded-Prefix");
+        if (prefix == null || prefix.isBlank()) {
+            prefix = "dbay-agent.up.railway.app".equals(host) ? "/agent-api" : "";
+        }
+        return proto + "://" + host + prefix + "/api/v1";
     }
 }

@@ -51,7 +51,10 @@ def _create_tenant(ts_suffix: str):
 
     username = f"kb-share-{ts_suffix}"
     fake_ip = f"10.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
-    reg = DbayClient(endpoint=ENDPOINT, extra_headers={"X-Forwarded-For": fake_ip})
+    reg = DbayClient(endpoint=ENDPOINT, extra_headers={
+        "X-Forwarded-For": fake_ip,
+        "X-DBay-Test-Forwarded-For": fake_ip,
+    })
     tenant = reg.create_tenant(
         username=username,
         password=f"KbShare@{ts_suffix}",

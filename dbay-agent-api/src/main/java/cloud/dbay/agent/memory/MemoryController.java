@@ -202,6 +202,7 @@ public class MemoryController {
         map.put("memory", item.getMemory());
         map.put("content", item.getMemory());
         map.put("source", item.getSource());
+        map.put("metadata", LbfsMemoryController.metadata(item.getSource(), item.getMemory()));
         map.put("created_at", item.getCreatedAt() != null ? item.getCreatedAt().toString() : null);
         return map;
     }

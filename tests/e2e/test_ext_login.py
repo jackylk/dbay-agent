@@ -23,8 +23,8 @@ BASE = f"{ENDPOINT}/api/v1"
 ADMIN_TOKEN = "lakeon-sre-2026"
 TIMEOUT = 60
 
-# Path to lakeon-console project
-CONSOLE_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'lakeon-console')
+# Path to dbay-agent console project after the repo split
+CONSOLE_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'dbay-agent-console')
 CONSOLE_PREVIEW_PORT = 14173
 
 
@@ -103,7 +103,7 @@ def temp_tenant():
     fake_ip = f"10.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
     reg_client = DbayClient(
         endpoint=BASE.replace("/api/v1", ""),
-        extra_headers={"X-Forwarded-For": fake_ip},
+        extra_headers={"X-Forwarded-For": fake_ip, "X-DBay-Test-Forwarded-For": fake_ip},
     )
     tenant = reg_client.create_tenant(
         username=username,
