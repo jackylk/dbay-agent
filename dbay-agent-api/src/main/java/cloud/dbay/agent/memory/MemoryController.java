@@ -97,6 +97,9 @@ public class MemoryController {
             item.setMemory(content);
             setIfPresent(body, "memory_type", item::setMemoryType);
             setIfPresent(body, "type", item::setMemoryType);
+            if ("conversation".equals(signal) && (item.getMemoryType() == null || "note".equals(item.getMemoryType()))) {
+                item.setMemoryType(inferMemoryType(content));
+            }
             item.setSource(string(body, "source"));
             saved = itemRepository.save(item);
         }
@@ -138,11 +141,14 @@ public class MemoryController {
         MemoryBaseEntity base = getOwned(request, id);
         String query = body == null ? "" : string(body, "query");
         String normalized = query == null ? "" : query.toLowerCase();
+        List<String> terms = java.util.Arrays.stream(normalized.split("\\s+"))
+                .filter(term -> !term.isBlank())
+                .toList();
         java.util.Set<String> types = body == null ? java.util.Set.of() : stringSet(body.get("memory_types"));
         int topK = body == null ? 10 : intValue(body.get("top_k"), 10);
         List<Map<String, Object>> memories = itemRepository.findByTenantIdAndMemoryBaseIdOrderByCreatedAtDesc(base.getTenantId(), base.getId())
                 .stream()
-                .filter(item -> normalized.isBlank() || safe(item.getMemory()).toLowerCase().contains(normalized))
+                .filter(item -> terms.isEmpty() || terms.stream().anyMatch(term -> safe(item.getMemory()).toLowerCase().contains(term)))
                 .filter(item -> types.isEmpty() || types.contains(item.getMemoryType()))
                 .limit(Math.max(0, topK))
                 .map(this::memoryResponse)
@@ -276,6 +282,17 @@ public class MemoryController {
 
     private String blankDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String inferMemoryType(String content) {
+        String normalized = safe(content).toLowerCase();
+        if (normalized.contains("决定") || normalized.contains("decision") || normalized.contains("chose") || normalized.contains("decided")) {
+            return "decision";
+        }
+        if (normalized.contains("rejected") || normalized.contains("拒绝")) {
+            return "rejection";
+        }
+        return "fact";
     }
 
     private String required(Map<String, Object> body, String key) {
