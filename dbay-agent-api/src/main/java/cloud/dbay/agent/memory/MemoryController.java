@@ -59,6 +59,15 @@ public class MemoryController {
         setIfPresent(body, "type", entity::setType);
         setIfPresent(body, "scene", entity::setScene);
         setIfPresent(body, "embedding_model", entity::setEmbeddingModel);
+        if (Boolean.TRUE.equals(body.get("encrypted"))) {
+            entity.setEncrypted(true);
+            setIfPresent(body, "encrypted_dek", entity::setEncryptedDek);
+            setIfPresent(body, "kdf_salt", entity::setKdfSalt);
+            Object dim = body.get("embedding_dim");
+            if (dim instanceof Number number) {
+                entity.setEmbeddingDim(number.intValue());
+            }
+        }
         return toResponse(repository.save(entity));
     }
 
@@ -253,6 +262,10 @@ public class MemoryController {
         map.put("memory_count", entity.getMemoryCount());
         map.put("trait_count", entity.getTraitCount());
         map.put("embedding_model", entity.getEmbeddingModel());
+        map.put("encrypted", Boolean.TRUE.equals(entity.getEncrypted()));
+        map.put("encrypted_dek", entity.getEncryptedDek());
+        map.put("kdf_salt", entity.getKdfSalt());
+        map.put("embedding_dim", entity.getEmbeddingDim());
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         map.put("updated_at", entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null);
         return map;

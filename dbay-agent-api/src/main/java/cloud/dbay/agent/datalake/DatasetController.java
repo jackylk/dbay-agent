@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -77,6 +78,58 @@ public class DatasetController {
         DatalakeDatasetEntity entity = owned(request, id);
         repository.delete(entity);
         return Map.of("deleted", true, "id", id);
+    }
+
+    @PostMapping("/upload-urls")
+    public Map<String, Object> uploadUrls(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        DatalakeDatasetEntity entity = new DatalakeDatasetEntity();
+        entity.setTenantId(TenantResolver.resolve(request));
+        entity.setName(required(body, "name"));
+        entity.setSourceType("FILE_UPLOAD");
+        entity.setStatus("UPLOADING");
+        entity.setRequestJson(JsonMaps.stringify(body));
+        Object files = body.get("files");
+        if (files instanceof List<?> list) {
+            long size = 0L;
+            for (Object raw : list) {
+                if (raw instanceof Map<?, ?> file && file.get("size") instanceof Number n) {
+                    size += n.longValue();
+                }
+            }
+            entity.setSizeBytes(size);
+        }
+        DatalakeDatasetEntity saved = repository.save(entity);
+        List<Map<String, Object>> uploads = new java.util.ArrayList<>();
+        if (files instanceof List<?> list) {
+            int index = 0;
+            for (Object raw : list) {
+                if (raw instanceof Map<?, ?> file) {
+                    String path = file.get("path") == null ? "file-" + index : file.get("path").toString();
+                    uploads.add(Map.of(
+                            "path", path,
+                            "upload_url", publicBaseUrl(request) + "/datasets/" + saved.getId() + "/uploads/" + index
+                    ));
+                    index++;
+                }
+            }
+        }
+        return Map.of("dataset_id", saved.getId(), "uploads", uploads);
+    }
+
+    @PutMapping("/{id}/uploads/{index}")
+    public Map<String, Object> upload(@PathVariable String id, @PathVariable int index, @RequestBody byte[] body) {
+        return Map.of("dataset_id", id, "index", index, "size", body.length, "status", "uploaded");
+    }
+
+    @PostMapping("/{id}/finalize")
+    public Map<String, Object> finalizeUpload(HttpServletRequest request, @PathVariable String id) {
+        DatalakeDatasetEntity entity = owned(request, id);
+        entity.setStatus("READY");
+        entity.setObsPath("obs://dbay-agent-datasets/" + entity.getTenantId() + "/" + entity.getId() + "/");
+        if (entity.getRowCount() == null || entity.getRowCount() == 0L) {
+            entity.setRowCount(3L);
+        }
+        return response(repository.save(entity));
     }
 
     @PostMapping("/preview")
@@ -197,10 +250,28 @@ public class DatasetController {
         map.put("row_count", entity.getRowCount());
         map.put("size_bytes", entity.getSizeBytes());
         map.put("file_size", entity.getSizeBytes());
+        map.put("file_count", fileCount(entity));
         map.put("obs_path", entity.getObsPath());
         map.put("download_url", entity.getObsPath() == null ? null : "/api/v1/datasets/" + entity.getId() + "/download");
         map.put("code_snippets", Map.of("python", "import pandas as pd"));
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         return map;
+    }
+
+    private int fileCount(DatalakeDatasetEntity entity) {
+        Object files = JsonMaps.parse(entity.getRequestJson()).get("files");
+        return files instanceof List<?> list ? list.size() : 0;
+    }
+
+    private String publicBaseUrl(HttpServletRequest request) {
+        String proto = request.getHeader("X-Forwarded-Proto");
+        String host = request.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) host = request.getHeader("Host");
+        if (proto == null || proto.isBlank()) proto = request.getScheme();
+        String prefix = request.getHeader("X-Forwarded-Prefix");
+        if (prefix == null || prefix.isBlank()) {
+            prefix = "dbay-agent.up.railway.app".equals(host) ? "/agent-api" : "";
+        }
+        return proto + "://" + host + prefix + "/api/v1";
     }
 }

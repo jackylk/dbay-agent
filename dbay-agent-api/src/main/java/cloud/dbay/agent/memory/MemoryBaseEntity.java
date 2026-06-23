@@ -46,6 +46,18 @@ public class MemoryBaseEntity {
     @Column(name = "embedding_model", length = 128)
     private String embeddingModel = "BAAI/bge-m3";
 
+    @Column(name = "encrypted")
+    private Boolean encrypted = false;
+
+    @Column(name = "encrypted_dek", columnDefinition = "text")
+    private String encryptedDek;
+
+    @Column(name = "kdf_salt", columnDefinition = "text")
+    private String kdfSalt;
+
+    @Column(name = "embedding_dim")
+    private Integer embeddingDim;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -85,6 +97,14 @@ public class MemoryBaseEntity {
     public void setTraitCount(Integer traitCount) { this.traitCount = traitCount; }
     public String getEmbeddingModel() { return embeddingModel; }
     public void setEmbeddingModel(String embeddingModel) { this.embeddingModel = embeddingModel; }
+    public Boolean getEncrypted() { return encrypted; }
+    public void setEncrypted(Boolean encrypted) { this.encrypted = encrypted; }
+    public String getEncryptedDek() { return encryptedDek; }
+    public void setEncryptedDek(String encryptedDek) { this.encryptedDek = encryptedDek; }
+    public String getKdfSalt() { return kdfSalt; }
+    public void setKdfSalt(String kdfSalt) { this.kdfSalt = kdfSalt; }
+    public Integer getEmbeddingDim() { return embeddingDim; }
+    public void setEmbeddingDim(Integer embeddingDim) { this.embeddingDim = embeddingDim; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

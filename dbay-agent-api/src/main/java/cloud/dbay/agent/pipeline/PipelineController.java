@@ -61,9 +61,10 @@ public class PipelineController {
 
     @GetMapping("/templates")
     public List<Map<String, Object>> templates() {
-        return pipelineRepository.findByIsTemplateTrueOrderByCreatedAtDesc().stream()
+        List<Map<String, Object>> stored = pipelineRepository.findByIsTemplateTrueOrderByCreatedAtDesc().stream()
                 .map(this::response)
                 .toList();
+        return java.util.stream.Stream.concat(staticTemplates().stream(), stored.stream()).toList();
     }
 
     @GetMapping("/{id}")
@@ -136,6 +137,25 @@ public class PipelineController {
         map.put("latest_version", p.getLatestVersion());
         map.put("created_at", p.getCreatedAt() != null ? p.getCreatedAt().toString() : null);
         map.put("updated_at", p.getUpdatedAt() != null ? p.getUpdatedAt().toString() : null);
+        return map;
+    }
+
+    private List<Map<String, Object>> staticTemplates() {
+        return List.of(
+                template("pipe_tpl_video_clean", "视频清洗模板", "VIDEO"),
+                template("pipe_tpl_text_clean", "文本处理模板", "TEXT")
+        );
+    }
+
+    private Map<String, Object> template(String id, String name, String dataType) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", id);
+        map.put("name", name);
+        map.put("description", name);
+        map.put("data_type", dataType);
+        map.put("is_template", true);
+        map.put("source_template_id", null);
+        map.put("latest_version", 1);
         return map;
     }
 

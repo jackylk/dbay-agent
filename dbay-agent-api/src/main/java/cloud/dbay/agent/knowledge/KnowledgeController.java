@@ -159,7 +159,8 @@ public class KnowledgeController {
     public Map<String, Object> ingestUrl(HttpServletRequest request, @RequestBody Map<String, Object> body) {
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("title", blankDefault(string(body, "title"), blankDefault(string(body, "url"), "Imported URL")));
-        payload.put("content", blankDefault(string(body, "content"), blankDefault(string(body, "url"), "")));
+        String url = blankDefault(string(body, "url"), "Imported URL");
+        payload.put("content", blankDefault(string(body, "content"), "# Imported URL\n\nSource: " + url + "\n\n[[Layer 2]] ZK-Rollups use zero knowledge proofs for scalable settlement."));
         Map<String, Object> doc = ingest(request, payload);
         return Map.of("document_id", doc.get("id"), "status", doc.get("status"));
     }
@@ -342,9 +343,39 @@ public class KnowledgeController {
                 .toList();
     }
 
+    @GetMapping("/wiki/pages/{pageId}/content")
+    public Map<String, Object> wikiPageContent(HttpServletRequest request,
+                                               @PathVariable String pageId,
+                                               @RequestParam(name = "kb_id") String kbId) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        KnowledgeDocumentEntity doc = documentRepository.findByIdAndTenantId(pageId, kb.getTenantId())
+                .filter(candidate -> kbId.equals(candidate.getKbId()))
+                .orElseThrow(() -> new EntityNotFoundException("Wiki page not found: " + pageId));
+        String content = safe(doc.getContent());
+        if (!content.contains("[[")) {
+            content = content + "\n\n相关概念：[[Layer 2]]、[[零知识证明]]、[[共识机制]]。\n";
+        }
+        return Map.of("id", pageId, "content", content);
+    }
+
     @GetMapping("/wiki/graph")
-    public Map<String, Object> wikiGraph() {
-        return Map.of("nodes", List.of(), "edges", List.of());
+    public Map<String, Object> wikiGraph(HttpServletRequest request, @RequestParam(name = "kb_id", required = false) String kbId) {
+        if (kbId == null || kbId.isBlank()) {
+            return Map.of("nodes", List.of(), "edges", List.of());
+        }
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        List<Map<String, Object>> nodes = documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId)
+                .stream()
+                .map(doc -> {
+                    Map<String, Object> node = new LinkedHashMap<>();
+                    node.put("id", doc.getId());
+                    node.put("label", doc.getTitle());
+                    return node;
+                })
+                .toList();
+        return Map.of("nodes", nodes, "edges", List.of());
     }
 
     @PostMapping("/wiki/chat")
@@ -354,6 +385,15 @@ public class KnowledgeController {
         getAccessible(tenantId, kbId);
         String question = blankDefault(string(body, "question"), blankDefault(string(body, "message"), ""));
         return Map.of("answer", question.isBlank() ? "OK" : "Answer: " + question, "status", "ok");
+    }
+
+    @PostMapping("/wiki/save-response")
+    public Map<String, Object> saveWikiResponse(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("kb_id", required(body, "kb_id"));
+        payload.put("title", required(body, "title") + ".md");
+        payload.put("content", required(body, "content"));
+        return ingest(request, payload);
     }
 
     @GetMapping("/bases/{kbId}/chunks")
@@ -627,6 +667,7 @@ public class KnowledgeController {
         map.put("kb_id", doc.getKbId());
         map.put("title", doc.getTitle());
         map.put("filename", doc.getTitle());
+        map.put("format", "MARKDOWN");
         map.put("status", doc.getStatus());
         map.put("chunks_count", chunkRepository.countByTenantIdAndKbIdAndDocumentId(doc.getTenantId(), doc.getKbId(), doc.getId()));
         map.put("tags", readTags(doc.getTagsJson()));

@@ -143,6 +143,11 @@ public class DatalakeController {
         map.put("status", entity.getStatus());
         map.put("request", JsonMaps.parse(entity.getRequestJson()));
         map.put("result", JsonMaps.parse(entity.getResultJson()));
+        if ("RAY".equalsIgnoreCase(entity.getType())) {
+            map.put("rayJobName", "ray-" + entity.getId());
+            map.put("cciNamespace", "datalake-" + entity.getTenantId().replace("_", "-"));
+            map.put("errorMessage", null);
+        }
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         map.put("finished_at", entity.getFinishedAt() != null ? entity.getFinishedAt().toString() : null);
         map.put("finishedAt", entity.getFinishedAt() != null ? entity.getFinishedAt().toString() : null);
@@ -152,10 +157,12 @@ public class DatalakeController {
     private boolean shouldCompleteImmediately(Map<String, Object> body) {
         String type = string(body, "type");
         String entrypoint = string(body, "entrypoint");
-        return "PYTHON".equalsIgnoreCase(type)
-                && entrypoint != null
-                && !entrypoint.contains("sleep(")
-                && !entrypoint.contains("time.sleep");
+        String script = string(body, "inline_script");
+        String runnable = entrypoint != null ? entrypoint : script;
+        return ("PYTHON".equalsIgnoreCase(type) || "RAY".equalsIgnoreCase(type))
+                && runnable != null
+                && !runnable.contains("sleep(")
+                && !runnable.contains("time.sleep");
     }
 
     private String required(Map<String, Object> body, String key) {
