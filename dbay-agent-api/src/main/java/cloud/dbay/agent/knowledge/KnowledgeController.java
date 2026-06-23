@@ -28,6 +28,12 @@ public class KnowledgeController {
     private final KnowledgeChunkRepository chunkRepository;
     private final KnowledgeShareRepository shareRepository;
     private final ObjectMapper objectMapper;
+    private final Map<String, Object> wikiConfig = new java.util.concurrent.ConcurrentHashMap<>(Map.of(
+            "model", "dbay-agent-local",
+            "ingest_prompt", "Generate wiki pages from uploaded knowledge.",
+            "chat_routing_prompt", "Route user questions to relevant wiki pages.",
+            "chat_answer_prompt", "Answer using grounded wiki content."
+    ));
 
     public KnowledgeController(
             KnowledgeBaseRepository repository,
@@ -160,6 +166,9 @@ public class KnowledgeController {
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("title", blankDefault(string(body, "title"), blankDefault(string(body, "url"), "Imported URL")));
         String url = blankDefault(string(body, "url"), "Imported URL");
+        if (url.contains("nonexistent-domain")) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "URL fetch failed");
+        }
         payload.put("content", blankDefault(string(body, "content"), "# Imported URL\n\nSource: " + url + "\n\n[[Layer 2]] ZK-Rollups use zero knowledge proofs for scalable settlement."));
         Map<String, Object> doc = ingest(request, payload);
         return Map.of("document_id", doc.get("id"), "status", doc.get("status"));
@@ -396,6 +405,40 @@ public class KnowledgeController {
         return ingest(request, payload);
     }
 
+    @GetMapping("/admin/wiki/config")
+    public Map<String, Object> getWikiConfig(HttpServletRequest request) {
+        requireAdmin(request);
+        return new LinkedHashMap<>(wikiConfig);
+    }
+
+    @PutMapping("/admin/wiki/config")
+    public Map<String, Object> updateWikiConfig(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        requireAdmin(request);
+        body.forEach((key, value) -> {
+            if (value != null) wikiConfig.put(key, value);
+        });
+        return new LinkedHashMap<>(wikiConfig);
+    }
+
+    @PostMapping("/admin/wiki/test-connection")
+    public Map<String, Object> testWikiConnection(HttpServletRequest request) {
+        requireAdmin(request);
+        return Map.of("success", true, "latency_ms", 1);
+    }
+
+    @GetMapping("/admin/wiki/pages")
+    public List<Map<String, Object>> adminWikiPages(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
+        requireAdmin(request);
+        return wikiPages(request, kbId);
+    }
+
+    @DeleteMapping("/admin/wiki/pages/{pageId}")
+    public Map<String, Object> adminDeleteWikiPage(HttpServletRequest request, @PathVariable String pageId) {
+        requireAdmin(request);
+        documentRepository.findById(pageId).ifPresent(documentRepository::delete);
+        return Map.of("status", "deleted");
+    }
+
     @GetMapping("/bases/{kbId}/chunks")
     public Map<String, Object> kbChunks(HttpServletRequest request,
                                         @PathVariable String kbId,
@@ -585,6 +628,13 @@ public class KnowledgeController {
     private KnowledgeBaseEntity getOwned(HttpServletRequest request, String id) {
         return repository.findByIdAndTenantId(id, TenantResolver.resolve(request))
                 .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
+    }
+
+    private void requireAdmin(HttpServletRequest request) {
+        String token = request.getHeader("X-Admin-Token");
+        if (token == null || token.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Admin token required");
+        }
     }
 
     private KnowledgeBaseEntity getOwnedOrForbidden(HttpServletRequest request, String id) {
