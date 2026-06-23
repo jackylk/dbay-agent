@@ -79,13 +79,13 @@ public class DatasetController {
     }
 
     @PostMapping("/preview")
-    public List<Object> preview(@RequestHeader HttpHeaders headers,
-                                @RequestBody Map<String, Object> body) {
+    public Map<String, Object> preview(@RequestHeader HttpHeaders headers,
+                                       @RequestBody Map<String, Object> body) {
         String databaseId = required(body, "database_id");
         String sql = previewSql(body);
         Map<String, Object> result = lakebaseQuery(headers, databaseId, sql);
         Object rows = result.get("rows");
-        return rows instanceof List<?> list ? List.copyOf(list) : List.of();
+        return Map.of("rows", rows instanceof List<?> list ? List.copyOf(list) : List.of());
     }
 
     @PostMapping("/{id}/export")
@@ -95,7 +95,7 @@ public class DatasetController {
         DatalakeDatasetEntity entity = owned(request, id);
         Map<String, Object> exporting = response(entity, "EXPORTING");
         try {
-            long rows = countRows(headers, entity);
+            long rows = exportRows(headers, entity);
             entity.setStatus("READY");
             entity.setRowCount(rows);
             entity.setSizeBytes(Math.max(0L, rows) * 64L);
@@ -114,14 +114,12 @@ public class DatasetController {
                 .orElseThrow(() -> new EntityNotFoundException("Dataset not found: " + id));
     }
 
-    private long countRows(HttpHeaders headers, DatalakeDatasetEntity entity) {
+    private long exportRows(HttpHeaders headers, DatalakeDatasetEntity entity) {
         Map<String, Object> request = JsonMaps.parse(entity.getRequestJson());
-        Map<String, Object> result = lakebaseQuery(headers, entity.getDatabaseId(), countSql(request));
+        Map<String, Object> result = lakebaseQuery(headers, entity.getDatabaseId(), exportSql(request));
         Object rows = result.get("rows");
-        if (rows instanceof List<?> rowList && !rowList.isEmpty() && rowList.get(0) instanceof List<?> first && !first.isEmpty()) {
-            Object value = first.get(0);
-            if (value instanceof Number n) return n.longValue();
-            if (value != null) return Long.parseLong(value.toString());
+        if (rows instanceof List<?> rowList) {
+            return rowList.size();
         }
         Object rowCount = result.get("row_count");
         return rowCount instanceof Number n ? n.longValue() : 0L;
@@ -152,12 +150,12 @@ public class DatasetController {
         return "SELECT * FROM " + firstTable(body) + " LIMIT 50";
     }
 
-    private String countSql(Map<String, Object> body) {
+    private String exportSql(Map<String, Object> body) {
         String mode = required(body, "query_mode");
         if ("CUSTOM_SQL".equalsIgnoreCase(mode)) {
-            return "SELECT COUNT(*) FROM (" + required(body, "sql") + ") dbay_dataset_count";
+            return required(body, "sql");
         }
-        return "SELECT COUNT(*) FROM " + firstTable(body);
+        return "SELECT * FROM " + firstTable(body);
     }
 
     private String firstTable(Map<String, Object> body) {
