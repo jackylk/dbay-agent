@@ -24,8 +24,8 @@ It depends on Lakebase through stable HTTP APIs exposed by `dbay.cloud`.
 ```text
 dbay-agent-api/       Spring Boot API
 dbay-agent-console/   Vue 3 Console
+lakeon-orchestrator/  Python FastAPI pipeline/orchestration runtime
 deploy/               Helm and cloud deployment
 tests/e2e/            API and workflow E2E tests
 docs/                 Architecture and API contracts
 ```
-
