@@ -642,6 +642,8 @@ public class KnowledgeController {
         map.put("document_id", chunk.getDocumentId());
         map.put("chunk_index", chunk.getChunkIndex());
         map.put("content", chunk.getContent());
+        map.put("char_offset_start", 0);
+        map.put("char_offset_end", safe(chunk.getContent()).length());
         return map;
     }
 
