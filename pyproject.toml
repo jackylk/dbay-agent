@@ -1,0 +1,13 @@
+# dbay-agent/pyproject.toml
+# uv workspace root for agent-adjacent Python services and shared packages.
+
+[tool.uv.workspace]
+members = [
+  "packages/agent-session-log",
+  "packages/hermes-agent-utils",
+  "sre-agent",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
