@@ -64,7 +64,7 @@ def _create_tenant(ts_suffix: str):
     # Inject username since create_tenant API response doesn't include it
     tenant["username"] = username
     client = DbayClient(endpoint=ENDPOINT, api_key=tenant["api_key"])
-    headers = {"Authorization": f"Bearer {tenant['api_key']}"}
+    headers = {"Authorization": f"Bearer {tenant['api_key']}", "X-DBay-Tenant-Id": username}
     return client, tenant, headers
 
 

@@ -26,25 +26,34 @@ public class KnowledgeController {
     private final KnowledgeBaseRepository repository;
     private final KnowledgeDocumentRepository documentRepository;
     private final KnowledgeChunkRepository chunkRepository;
+    private final KnowledgeShareRepository shareRepository;
     private final ObjectMapper objectMapper;
 
     public KnowledgeController(
             KnowledgeBaseRepository repository,
             KnowledgeDocumentRepository documentRepository,
             KnowledgeChunkRepository chunkRepository,
+            KnowledgeShareRepository shareRepository,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
+        this.shareRepository = shareRepository;
         this.objectMapper = objectMapper;
     }
 
     @GetMapping("/bases")
     public List<Map<String, Object>> listBases(HttpServletRequest request) {
-        return repository.findByTenantIdOrderByUpdatedAtDesc(TenantResolver.resolve(request)).stream()
-                .map(this::toResponse)
+        String tenantId = TenantResolver.resolve(request);
+        List<Map<String, Object>> owned = repository.findByTenantIdOrderByUpdatedAtDesc(tenantId).stream()
+                .map(kb -> toResponse(kb, false))
                 .toList();
+        List<Map<String, Object>> shared = shareRepository.findByMemberTenantIdOrderByCreatedAtDesc(tenantId).stream()
+                .flatMap(share -> repository.findById(share.getKbId()).stream())
+                .map(kb -> toResponse(kb, true))
+                .toList();
+        return java.util.stream.Stream.concat(owned.stream(), shared.stream()).toList();
     }
 
     @PostMapping("/bases")
@@ -65,12 +74,52 @@ public class KnowledgeController {
 
     @GetMapping("/bases/{id}")
     public Map<String, Object> getBase(HttpServletRequest request, @PathVariable String id) {
-        return toResponse(getOwned(request, id));
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity entity = getAccessible(tenantId, id);
+        return toResponse(entity, !tenantId.equals(entity.getTenantId()));
     }
 
     @DeleteMapping("/bases/{id}")
     public Map<String, Object> deleteBase(HttpServletRequest request, @PathVariable String id) {
-        repository.delete(getOwned(request, id));
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
+        if (!tenantId.equals(kb.getTenantId()) && canAccess(tenantId, id)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Shared members cannot delete knowledge bases");
+        }
+        if (!tenantId.equals(kb.getTenantId())) {
+            throw new EntityNotFoundException("Knowledge base not found: " + id);
+        }
+        repository.delete(kb);
+        return Map.of("status", "deleted");
+    }
+
+    @PostMapping("/bases/{id}/shares")
+    public Map<String, Object> createShare(HttpServletRequest request, @PathVariable String id, @RequestBody Map<String, Object> body) {
+        KnowledgeBaseEntity kb = getOwnedOrForbidden(request, id);
+        String username = required(body, "username");
+        if (shareRepository.findByKbIdAndMemberTenantId(id, username).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Share already exists");
+        }
+        KnowledgeShareEntity share = new KnowledgeShareEntity();
+        share.setKbId(id);
+        share.setOwnerTenantId(kb.getTenantId());
+        share.setMemberTenantId(username);
+        return shareResponse(shareRepository.save(share));
+    }
+
+    @GetMapping("/bases/{id}/shares")
+    public List<Map<String, Object>> listShares(HttpServletRequest request, @PathVariable String id) {
+        getOwnedOrForbidden(request, id);
+        return shareRepository.findByKbIdOrderByCreatedAtAsc(id).stream().map(this::shareResponse).toList();
+    }
+
+    @DeleteMapping("/bases/{id}/shares/{shareId}")
+    public Map<String, Object> deleteShare(HttpServletRequest request, @PathVariable String id, @PathVariable String shareId) {
+        getOwnedOrForbidden(request, id);
+        KnowledgeShareEntity share = shareRepository.findByIdAndKbId(shareId, id)
+                .orElseThrow(() -> new EntityNotFoundException("Share not found: " + shareId));
+        shareRepository.delete(share);
         return Map.of("status", "deleted");
     }
 
@@ -79,8 +128,7 @@ public class KnowledgeController {
     public Map<String, Object> ingest(HttpServletRequest request, @RequestBody Map<String, Object> body) {
         String tenantId = TenantResolver.resolve(request);
         String kbId = required(body, "kb_id");
-        KnowledgeBaseEntity kb = repository.findByIdAndTenantId(kbId, tenantId)
-                .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + kbId));
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
         String content = string(body, "content");
         if (content == null || content.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "content is required");
@@ -119,7 +167,7 @@ public class KnowledgeController {
     @GetMapping("/documents")
     public List<Map<String, Object>> listDocuments(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
         String tenantId = TenantResolver.resolve(request);
-        getBaseForTenant(tenantId, kbId);
+        getAccessible(tenantId, kbId);
         return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
                 .stream()
                 .map(this::documentResponse)
@@ -129,8 +177,10 @@ public class KnowledgeController {
     @GetMapping("/documents/{id}")
     public Map<String, Object> getDocument(HttpServletRequest request, @PathVariable String id) {
         String tenantId = TenantResolver.resolve(request);
-        return documentResponse(documentRepository.findByIdAndTenantId(id, tenantId)
-                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id)));
+        KnowledgeDocumentEntity doc = documentRepository.findById(id)
+                .filter(candidate -> canAccess(tenantId, candidate.getKbId()))
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
+        return documentResponse(doc);
     }
 
     @DeleteMapping("/documents/{id}")
@@ -151,9 +201,9 @@ public class KnowledgeController {
                                          @RequestParam(name = "kb_id") String kbId,
                                          @RequestParam String filename) {
         String tenantId = TenantResolver.resolve(request);
-        getBaseForTenant(tenantId, kbId);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
         KnowledgeDocumentEntity doc = new KnowledgeDocumentEntity();
-        doc.setTenantId(tenantId);
+        doc.setTenantId(kb.getTenantId());
         doc.setKbId(kbId);
         doc.setTitle(filename);
         doc.setContent("");
@@ -180,7 +230,8 @@ public class KnowledgeController {
     @PostMapping("/documents/{id}/process")
     public Map<String, Object> processDocument(HttpServletRequest request, @PathVariable String id) {
         String tenantId = TenantResolver.resolve(request);
-        KnowledgeDocumentEntity doc = documentRepository.findByIdAndTenantId(id, tenantId)
+        KnowledgeDocumentEntity doc = documentRepository.findById(id)
+                .filter(candidate -> canAccess(tenantId, candidate.getKbId()))
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
         if (!"READY".equals(doc.getStatus())) {
             KnowledgeChunkEntity chunk = new KnowledgeChunkEntity();
@@ -193,8 +244,8 @@ public class KnowledgeController {
             doc.setStatus("READY");
             documentRepository.save(doc);
         }
-        repository.findByIdAndTenantId(doc.getKbId(), tenantId).ifPresent(kb -> {
-            kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(tenantId, doc.getKbId()));
+        repository.findById(doc.getKbId()).ifPresent(kb -> {
+            kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(kb.getTenantId(), doc.getKbId()));
             repository.save(kb);
         });
         return documentResponse(doc);
@@ -205,7 +256,7 @@ public class KnowledgeController {
         String tenantId = TenantResolver.resolve(request);
         String kbId = required(body, "kb_id");
         String query = blankDefault(string(body, "query"), "").toLowerCase();
-        getBaseForTenant(tenantId, kbId);
+        getAccessible(tenantId, kbId);
         List<Map<String, Object>> results = chunkRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
                 .stream()
                 .filter(chunk -> query.isBlank() || safe(chunk.getContent()).toLowerCase().contains(query))
@@ -226,8 +277,8 @@ public class KnowledgeController {
     @GetMapping("/wiki/pages")
     public List<Map<String, Object>> wikiPages(HttpServletRequest request, @org.springframework.web.bind.annotation.RequestParam(name = "kb_id") String kbId) {
         String tenantId = TenantResolver.resolve(request);
-        getBaseForTenant(tenantId, kbId);
-        return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId)
                 .stream()
                 .map(doc -> {
                     Map<String, Object> map = documentResponse(doc);
@@ -244,11 +295,20 @@ public class KnowledgeController {
         return Map.of("nodes", List.of(), "edges", List.of());
     }
 
+    @PostMapping("/wiki/chat")
+    public Map<String, Object> wikiChat(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String kbId = required(body, "kb_id");
+        getAccessible(tenantId, kbId);
+        String question = blankDefault(string(body, "question"), blankDefault(string(body, "message"), ""));
+        return Map.of("answer", question.isBlank() ? "OK" : "Answer: " + question, "status", "ok");
+    }
+
     @GetMapping("/bases/{kbId}/documents/{docId}/chunks")
     public Map<String, Object> documentChunks(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
         String tenantId = TenantResolver.resolve(request);
-        getBaseForTenant(tenantId, kbId);
-        documentRepository.findByIdAndTenantId(docId, tenantId)
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        documentRepository.findByIdAndTenantId(docId, kb.getTenantId())
                 .filter(doc -> kbId.equals(doc.getKbId()))
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
         List<Map<String, Object>> chunks = chunkRepository.findByTenantIdAndKbIdAndDocumentIdOrderByChunkIndexAsc(tenantId, kbId, docId)
@@ -263,12 +323,41 @@ public class KnowledgeController {
                 .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
     }
 
+    private KnowledgeBaseEntity getOwnedOrForbidden(HttpServletRequest request, String id) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
+        if (!tenantId.equals(kb.getTenantId())) {
+            if (canAccess(tenantId, id)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can manage shares");
+            }
+            throw new EntityNotFoundException("Knowledge base not found: " + id);
+        }
+        return kb;
+    }
+
     private KnowledgeBaseEntity getBaseForTenant(String tenantId, String id) {
         return repository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
     }
 
+    private KnowledgeBaseEntity getAccessible(String tenantId, String id) {
+        return repository.findByIdAndTenantId(id, tenantId)
+                .or(() -> shareRepository.findByKbIdAndMemberTenantId(id, tenantId)
+                        .flatMap(share -> repository.findById(id)))
+                .orElseThrow(() -> new EntityNotFoundException("Knowledge base not found: " + id));
+    }
+
+    private boolean canAccess(String tenantId, String kbId) {
+        return repository.findByIdAndTenantId(kbId, tenantId).isPresent()
+                || shareRepository.findByKbIdAndMemberTenantId(kbId, tenantId).isPresent();
+    }
+
     private Map<String, Object> toResponse(KnowledgeBaseEntity entity) {
+        return toResponse(entity, false);
+    }
+
+    private Map<String, Object> toResponse(KnowledgeBaseEntity entity, boolean shared) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", entity.getId());
         map.put("tenant_id", entity.getTenantId());
@@ -278,8 +367,19 @@ public class KnowledgeController {
         map.put("status", entity.getStatus());
         map.put("document_count", entity.getDocumentCount());
         map.put("database_id", "agent-" + entity.getId());
+        map.put("is_shared", shared);
         map.put("created_at", entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         map.put("updated_at", entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null);
+        return map;
+    }
+
+    private Map<String, Object> shareResponse(KnowledgeShareEntity share) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", share.getId());
+        map.put("kb_id", share.getKbId());
+        map.put("username", share.getMemberTenantId());
+        map.put("role", share.getRole());
+        map.put("created_at", share.getCreatedAt() != null ? share.getCreatedAt().toString() : null);
         return map;
     }
 
