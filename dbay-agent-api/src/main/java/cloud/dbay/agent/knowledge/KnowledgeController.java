@@ -167,9 +167,15 @@ public class KnowledgeController {
     @GetMapping("/documents")
     public List<Map<String, Object>> listDocuments(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
         String tenantId = TenantResolver.resolve(request);
-        getAccessible(tenantId, kbId);
-        return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
-                .stream()
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        java.util.stream.Stream<KnowledgeDocumentEntity> docs =
+                documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId).stream();
+        if (!tenantId.equals(kb.getTenantId())) {
+            docs = java.util.stream.Stream.concat(
+                    docs,
+                    documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId).stream());
+        }
+        return docs
                 .map(this::documentResponse)
                 .toList();
     }
@@ -186,8 +192,14 @@ public class KnowledgeController {
     @DeleteMapping("/documents/{id}")
     public Map<String, Object> deleteDocument(HttpServletRequest request, @PathVariable String id) {
         String tenantId = TenantResolver.resolve(request);
-        KnowledgeDocumentEntity doc = documentRepository.findByIdAndTenantId(id, tenantId)
+        KnowledgeDocumentEntity doc = documentRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
+        if (!tenantId.equals(doc.getTenantId())) {
+            if (canAccess(tenantId, doc.getKbId())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Shared members cannot delete documents");
+            }
+            throw new EntityNotFoundException("Document not found: " + id);
+        }
         documentRepository.delete(doc);
         repository.findByIdAndTenantId(doc.getKbId(), tenantId).ifPresent(kb -> {
             kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(tenantId, doc.getKbId()));
@@ -235,7 +247,7 @@ public class KnowledgeController {
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + id));
         if (!"READY".equals(doc.getStatus())) {
             KnowledgeChunkEntity chunk = new KnowledgeChunkEntity();
-            chunk.setTenantId(tenantId);
+            chunk.setTenantId(doc.getTenantId());
             chunk.setKbId(doc.getKbId());
             chunk.setDocumentId(doc.getId());
             chunk.setChunkIndex(0);
