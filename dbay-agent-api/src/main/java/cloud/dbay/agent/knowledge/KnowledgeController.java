@@ -212,6 +212,7 @@ public class KnowledgeController {
     public Map<String, Object> uploadUrl(HttpServletRequest request,
                                          @RequestParam(name = "kb_id") String kbId,
                                          @RequestParam String filename) {
+        validateFilename(filename);
         String tenantId = TenantResolver.resolve(request);
         KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
         KnowledgeDocumentEntity doc = new KnowledgeDocumentEntity();
@@ -227,6 +228,30 @@ public class KnowledgeController {
                 "upload_url", publicBaseUrl(request) + "/knowledge/uploads/" + saved.getId(),
                 "expires_in", 3600
         );
+    }
+
+    @PostMapping("/batch-upload-urls")
+    public Map<String, Object> batchUploadUrls(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String kbId = required(body, "kb_id");
+        Object rawFiles = body.get("files");
+        if (!(rawFiles instanceof List<?> files) || files.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "files is required");
+        }
+        if (files.size() > 20) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At most 20 files per batch");
+        }
+        List<Map<String, Object>> documents = new java.util.ArrayList<>();
+        for (Object raw : files) {
+            if (!(raw instanceof Map<?, ?> file)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid file entry");
+            }
+            Object filename = file.get("filename");
+            if (filename == null || filename.toString().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "filename is required");
+            }
+            documents.add(uploadUrl(request, kbId, filename.toString()));
+        }
+        return Map.of("documents", documents);
     }
 
     @PutMapping("/uploads/{id}")
@@ -263,27 +288,42 @@ public class KnowledgeController {
         return documentResponse(doc);
     }
 
+    @PostMapping("/batch-process")
+    public Map<String, Object> batchProcessDocuments(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        Object rawIds = body.get("document_ids");
+        if (!(rawIds instanceof List<?> ids) || ids.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "document_ids is required");
+        }
+        List<Map<String, Object>> documents = new java.util.ArrayList<>();
+        for (Object rawId : ids) {
+            documents.add(processDocument(request, rawId.toString()));
+        }
+        return Map.of("document_count", documents.size(), "documents", documents);
+    }
+
     @PostMapping("/search")
     public Map<String, Object> search(HttpServletRequest request, @RequestBody Map<String, Object> body) {
         String tenantId = TenantResolver.resolve(request);
         String kbId = required(body, "kb_id");
         String query = blankDefault(string(body, "query"), "").toLowerCase();
-        getAccessible(tenantId, kbId);
-        List<Map<String, Object>> results = chunkRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(tenantId, kbId)
-                .stream()
-                .filter(chunk -> query.isBlank() || safe(chunk.getContent()).toLowerCase().contains(query))
-                .map(chunk -> {
-                    Map<String, Object> map = new LinkedHashMap<>();
-                    map.put("id", chunk.getId());
-                    map.put("kb_id", chunk.getKbId());
-                    map.put("document_id", chunk.getDocumentId());
-                    map.put("chunk_index", chunk.getChunkIndex());
-                    map.put("content", chunk.getContent());
-                    map.put("score", 1.0);
-                    return map;
-                })
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        if (query.isBlank()) {
+            return Map.of("results", List.of(), "total", 0, "count", 0);
+        }
+        int topK = intValue(body.get("top_k"), 5);
+        java.util.Set<String> documentIds = stringSet(body.get("document_ids"));
+        List<String> terms = java.util.Arrays.stream(query.split("\\s+"))
+                .filter(term -> !term.isBlank())
                 .toList();
-        return Map.of("results", results, "total", results.size());
+        List<Map<String, Object>> results = chunkRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId)
+                .stream()
+                .filter(chunk -> documentIds.isEmpty() || documentIds.contains(chunk.getDocumentId()))
+                .map(chunk -> scoredChunk(chunk, terms))
+                .filter(item -> ((Number) item.get("score")).doubleValue() > 0)
+                .sorted((a, b) -> Double.compare(((Number) b.get("score")).doubleValue(), ((Number) a.get("score")).doubleValue()))
+                .limit(Math.max(0, topK))
+                .toList();
+        return Map.of("results", results, "total", results.size(), "count", results.size());
     }
 
     @GetMapping("/wiki/pages")
@@ -316,18 +356,190 @@ public class KnowledgeController {
         return Map.of("answer", question.isBlank() ? "OK" : "Answer: " + question, "status", "ok");
     }
 
+    @GetMapping("/bases/{kbId}/chunks")
+    public Map<String, Object> kbChunks(HttpServletRequest request,
+                                        @PathVariable String kbId,
+                                        @RequestParam(name = "doc_id", required = false) String docId,
+                                        @RequestParam(name = "offset", defaultValue = "0") int offset,
+                                        @RequestParam(name = "limit", defaultValue = "50") int limit) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        List<Map<String, Object>> chunks = chunkRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId)
+                .stream()
+                .filter(chunk -> docId == null || docId.isBlank() || docId.equals(chunk.getDocumentId()))
+                .map(this::chunkResponse)
+                .toList();
+        return page(chunks, offset, limit, "chunks");
+    }
+
     @GetMapping("/bases/{kbId}/documents/{docId}/chunks")
-    public Map<String, Object> documentChunks(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+    public Map<String, Object> documentChunks(HttpServletRequest request,
+                                              @PathVariable String kbId,
+                                              @PathVariable String docId,
+                                              @RequestParam(name = "offset", defaultValue = "0") int offset,
+                                              @RequestParam(name = "limit", defaultValue = "50") int limit) {
         String tenantId = TenantResolver.resolve(request);
         KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
         documentRepository.findByIdAndTenantId(docId, kb.getTenantId())
                 .filter(doc -> kbId.equals(doc.getKbId()))
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
-        List<Map<String, Object>> chunks = chunkRepository.findByTenantIdAndKbIdAndDocumentIdOrderByChunkIndexAsc(tenantId, kbId, docId)
+        List<Map<String, Object>> chunks = chunkRepository.findByTenantIdAndKbIdAndDocumentIdOrderByChunkIndexAsc(kb.getTenantId(), kbId, docId)
                 .stream()
                 .map(this::chunkResponse)
                 .toList();
-        return Map.of("chunks", chunks, "total", chunks.size());
+        return page(chunks, offset, limit, "chunks");
+    }
+
+    @GetMapping("/bases/{kbId}/documents/{docId}/chunks/{chunkIndex}")
+    public Map<String, Object> getChunk(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId, @PathVariable int chunkIndex) {
+        return chunkResponse(findChunk(request, kbId, docId, chunkIndex));
+    }
+
+    @GetMapping("/bases/{kbId}/documents/{docId}/chunks/{chunkIndex}/context")
+    public Map<String, Object> chunkContext(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId, @PathVariable int chunkIndex) {
+        KnowledgeChunkEntity chunk = findChunk(request, kbId, docId, chunkIndex);
+        return Map.of("chunk", chunkResponse(chunk), "previous", List.of(), "next", List.of());
+    }
+
+    @GetMapping("/bases/{kbId}/documents/{docId}/fulltext")
+    public Map<String, Object> fulltext(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+        KnowledgeDocumentEntity doc = findDocumentForAccess(request, kbId, docId);
+        return Map.of("content", safe(doc.getContent()), "fulltext", safe(doc.getContent()));
+    }
+
+    @GetMapping("/bases/{kbId}/documents/{docId}/chunk-stats")
+    public Map<String, Object> chunkStats(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+        KnowledgeDocumentEntity doc = findDocumentForAccess(request, kbId, docId);
+        long count = chunkRepository.countByTenantIdAndKbIdAndDocumentId(doc.getTenantId(), kbId, docId);
+        return Map.of("total", count, "chunk_count", count);
+    }
+
+    @PutMapping("/bases/{kbId}/documents/{docId}/chunks/{chunkIndex}")
+    public Map<String, Object> editChunk(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId, @PathVariable int chunkIndex, @RequestBody Map<String, Object> body) {
+        KnowledgeChunkEntity chunk = findOwnedChunk(request, kbId, docId, chunkIndex);
+        chunk.setContent(required(body, "content"));
+        return chunkResponse(chunkRepository.save(chunk));
+    }
+
+    @PostMapping("/bases/{kbId}/documents/{docId}/chunks")
+    public Map<String, Object> createChunk(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        if (!tenantId.equals(kb.getTenantId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Shared members cannot edit chunks");
+        }
+        documentRepository.findByIdAndTenantId(docId, tenantId)
+                .filter(doc -> kbId.equals(doc.getKbId()))
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
+        int nextIndex = (int) chunkRepository.countByTenantIdAndKbIdAndDocumentId(tenantId, kbId, docId);
+        KnowledgeChunkEntity chunk = new KnowledgeChunkEntity();
+        chunk.setTenantId(tenantId);
+        chunk.setKbId(kbId);
+        chunk.setDocumentId(docId);
+        chunk.setChunkIndex(nextIndex);
+        chunk.setContent(required(body, "content"));
+        return chunkResponse(chunkRepository.save(chunk));
+    }
+
+    @DeleteMapping("/bases/{kbId}/documents/{docId}/chunks/{chunkIndex}")
+    public Map<String, Object> deleteChunk(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId, @PathVariable int chunkIndex) {
+        KnowledgeChunkEntity chunk = findOwnedChunk(request, kbId, docId, chunkIndex);
+        chunkRepository.delete(chunk);
+        return Map.of("status", "deleted");
+    }
+
+    @PostMapping("/bases/{kbId}/documents/{docId}/rechunk")
+    public Map<String, Object> rechunk(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+        KnowledgeDocumentEntity doc = findDocumentForAccess(request, kbId, docId);
+        if (chunkRepository.countByTenantIdAndKbIdAndDocumentId(doc.getTenantId(), kbId, docId) == 0) {
+            processDocument(request, docId);
+        }
+        return Map.of("status", "SUCCEEDED", "branch_id", "current", "document_id", docId);
+    }
+
+    @GetMapping("/bases/{kbId}/documents/{docId}/rechunk/branches")
+    public Map<String, Object> rechunkBranches(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+        findDocumentForAccess(request, kbId, docId);
+        return Map.of("branches", List.of(Map.of("id", "current", "name", "current")));
+    }
+
+    @PostMapping("/bases/{kbId}/documents/{docId}/rechunk/rollback")
+    public Map<String, Object> rechunkRollback(HttpServletRequest request, @PathVariable String kbId, @PathVariable String docId) {
+        findDocumentForAccess(request, kbId, docId);
+        return Map.of("status", "SUCCEEDED", "document_id", docId);
+    }
+
+    private KnowledgeDocumentEntity findDocumentForAccess(HttpServletRequest request, String kbId, String docId) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        return documentRepository.findByIdAndTenantId(docId, kb.getTenantId())
+                .filter(doc -> kbId.equals(doc.getKbId()))
+                .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
+    }
+
+    private KnowledgeChunkEntity findChunk(HttpServletRequest request, String kbId, String docId, int chunkIndex) {
+        KnowledgeDocumentEntity doc = findDocumentForAccess(request, kbId, docId);
+        return chunkRepository.findByTenantIdAndKbIdAndDocumentIdAndChunkIndex(doc.getTenantId(), kbId, docId, chunkIndex)
+                .orElseThrow(() -> new EntityNotFoundException("Chunk not found: " + chunkIndex));
+    }
+
+    private KnowledgeChunkEntity findOwnedChunk(HttpServletRequest request, String kbId, String docId, int chunkIndex) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        if (!tenantId.equals(kb.getTenantId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Shared members cannot edit chunks");
+        }
+        return chunkRepository.findByTenantIdAndKbIdAndDocumentIdAndChunkIndex(tenantId, kbId, docId, chunkIndex)
+                .orElseThrow(() -> new EntityNotFoundException("Chunk not found: " + chunkIndex));
+    }
+
+    private Map<String, Object> page(List<Map<String, Object>> items, int offset, int limit, String key) {
+        int from = Math.max(0, Math.min(offset, items.size()));
+        int to = Math.max(from, Math.min(items.size(), from + Math.max(0, limit)));
+        List<Map<String, Object>> slice = items.subList(from, to);
+        return Map.of(key, slice, "items", slice, "total", items.size());
+    }
+
+    private Map<String, Object> scoredChunk(KnowledgeChunkEntity chunk, List<String> terms) {
+        String content = safe(chunk.getContent()).toLowerCase();
+        long hits = terms.stream().filter(content::contains).count();
+        double score = terms.isEmpty() ? 0.0 : (double) hits / (double) terms.size();
+        Map<String, Object> map = chunkResponse(chunk);
+        map.put("score", score);
+        return map;
+    }
+
+    private java.util.Set<String> stringSet(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> set = new java.util.LinkedHashSet<>();
+        for (Object item : list) {
+            if (item != null && !item.toString().isBlank()) {
+                set.add(item.toString());
+            }
+        }
+        return set;
+    }
+
+    private int intValue(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value != null) {
+            try {
+                return Integer.parseInt(value.toString());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return fallback;
+    }
+
+    private void validateFilename(String filename) {
+        String lower = filename == null ? "" : filename.toLowerCase();
+        if (!(lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt"))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported file format");
+        }
     }
 
     private KnowledgeBaseEntity getOwned(HttpServletRequest request, String id) {

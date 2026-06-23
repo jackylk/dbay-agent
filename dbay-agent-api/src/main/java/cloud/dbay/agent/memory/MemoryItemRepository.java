@@ -8,4 +8,5 @@ public interface MemoryItemRepository extends JpaRepository<MemoryItemEntity, St
     List<MemoryItemEntity> findByTenantIdAndMemoryBaseIdOrderByCreatedAtDesc(String tenantId, String memoryBaseId);
     Optional<MemoryItemEntity> findByTenantIdAndMemoryBaseIdAndSource(String tenantId, String memoryBaseId, String source);
     long countByTenantIdAndMemoryBaseId(String tenantId, String memoryBaseId);
+    long countByTenantIdAndMemoryBaseIdAndMemoryType(String tenantId, String memoryBaseId, String memoryType);
 }

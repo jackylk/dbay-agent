@@ -1,6 +1,7 @@
 package cloud.dbay.agent.memory;
 
 import cloud.dbay.agent.common.TenantResolver;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.LinkedHashMap;
@@ -23,15 +24,18 @@ public class MemoryController {
     private final MemoryBaseRepository repository;
     private final MemoryItemRepository itemRepository;
     private final MemoryRawMessageRepository rawMessageRepository;
+    private final ObjectMapper objectMapper;
 
     public MemoryController(
             MemoryBaseRepository repository,
             MemoryItemRepository itemRepository,
-            MemoryRawMessageRepository rawMessageRepository
+            MemoryRawMessageRepository rawMessageRepository,
+            ObjectMapper objectMapper
     ) {
         this.repository = repository;
         this.itemRepository = itemRepository;
         this.rawMessageRepository = rawMessageRepository;
+        this.objectMapper = objectMapper;
     }
 
     @GetMapping("/bases")
@@ -84,18 +88,49 @@ public class MemoryController {
         raw.setSource(string(body, "source"));
         rawMessageRepository.save(raw);
 
-        MemoryItemEntity item = new MemoryItemEntity();
-        item.setTenantId(base.getTenantId());
-        item.setMemoryBaseId(base.getId());
-        item.setMemory(content);
-        setIfPresent(body, "memory_type", item::setMemoryType);
-        setIfPresent(body, "type", item::setMemoryType);
-        item.setSource(string(body, "source"));
-        MemoryItemEntity saved = itemRepository.save(item);
+        String signal = blankDefault(string(body, "signal"), "memory");
+        MemoryItemEntity saved = null;
+        if ("memory".equals(signal) || "conversation".equals(signal)) {
+            MemoryItemEntity item = new MemoryItemEntity();
+            item.setTenantId(base.getTenantId());
+            item.setMemoryBaseId(base.getId());
+            item.setMemory(content);
+            setIfPresent(body, "memory_type", item::setMemoryType);
+            setIfPresent(body, "type", item::setMemoryType);
+            item.setSource(string(body, "source"));
+            saved = itemRepository.save(item);
+        }
 
         base.setMemoryCount((int) itemRepository.countByTenantIdAndMemoryBaseId(base.getTenantId(), base.getId()));
         repository.save(base);
-        return memoryResponse(saved);
+        if ("memory".equals(signal)) {
+            Map<String, Object> response = memoryResponse(saved);
+            response.put("status", "stored");
+            response.put("memory_id", saved.getId());
+            return response;
+        }
+        return Map.of("status", "extracting", "message_id", raw.getId());
+    }
+
+    @PostMapping("/bases/{id}/ingest_extracted")
+    public Map<String, Object> ingestExtracted(HttpServletRequest request, @PathVariable String id, @RequestBody Map<String, Object> body) {
+        MemoryBaseEntity base = getOwned(request, id);
+        String messageId = required(body, "message_id");
+        rawMessageRepository.findById(messageId)
+                .filter(raw -> base.getTenantId().equals(raw.getTenantId()) && base.getId().equals(raw.getMemoryBaseId()))
+                .orElseThrow(() -> new EntityNotFoundException("Raw message not found: " + messageId));
+        Object rawData = body.get("data");
+        Map<?, ?> data = rawData instanceof Map<?, ?> map ? map : Map.of();
+        Map<String, Object> counts = new LinkedHashMap<>();
+        storeExtracted(base, data, "facts", "fact", "facts_stored", counts);
+        storeExtracted(base, data, "episodes", "episode", "episodes_stored", counts);
+        storeExtracted(base, data, "procedural", "procedural", "procedural_stored", counts);
+        storeExtracted(base, data, "decisions", "decision", "decisions_stored", counts);
+        storeExtracted(base, data, "rejections", "rejection", "rejections_stored", counts);
+        storeExtracted(base, data, "conventions", "convention", "conventions_stored", counts);
+        base.setMemoryCount((int) itemRepository.countByTenantIdAndMemoryBaseId(base.getTenantId(), base.getId()));
+        repository.save(base);
+        return counts;
     }
 
     @PostMapping("/bases/{id}/recall")
@@ -103,29 +138,74 @@ public class MemoryController {
         MemoryBaseEntity base = getOwned(request, id);
         String query = body == null ? "" : string(body, "query");
         String normalized = query == null ? "" : query.toLowerCase();
+        java.util.Set<String> types = body == null ? java.util.Set.of() : stringSet(body.get("memory_types"));
+        int topK = body == null ? 10 : intValue(body.get("top_k"), 10);
         List<Map<String, Object>> memories = itemRepository.findByTenantIdAndMemoryBaseIdOrderByCreatedAtDesc(base.getTenantId(), base.getId())
                 .stream()
                 .filter(item -> normalized.isBlank() || safe(item.getMemory()).toLowerCase().contains(normalized))
+                .filter(item -> types.isEmpty() || types.contains(item.getMemoryType()))
+                .limit(Math.max(0, topK))
                 .map(this::memoryResponse)
                 .toList();
         return Map.of("memories", memories, "total", memories.size());
     }
 
     @GetMapping("/bases/{id}/memories")
-    public Map<String, Object> memories(HttpServletRequest request, @PathVariable String id) {
+    public Map<String, Object> memories(HttpServletRequest request, @PathVariable String id,
+                                        @org.springframework.web.bind.annotation.RequestParam(name = "memory_type", required = false) String memoryType,
+                                        @org.springframework.web.bind.annotation.RequestParam(name = "offset", defaultValue = "0") int offset,
+                                        @org.springframework.web.bind.annotation.RequestParam(name = "limit", defaultValue = "20") int limit) {
         MemoryBaseEntity base = getOwned(request, id);
         List<Map<String, Object>> memories = itemRepository.findByTenantIdAndMemoryBaseIdOrderByCreatedAtDesc(base.getTenantId(), base.getId())
                 .stream()
+                .filter(item -> memoryType == null || memoryType.isBlank() || memoryType.equals(item.getMemoryType()))
                 .map(this::memoryResponse)
                 .toList();
-        return Map.of("memories", memories, "items", memories, "total", memories.size());
+        int from = Math.max(0, Math.min(offset, memories.size()));
+        int to = Math.max(from, Math.min(memories.size(), from + Math.max(0, limit)));
+        List<Map<String, Object>> page = memories.subList(from, to);
+        return Map.of("memories", page, "items", page, "total", memories.size());
+    }
+
+    @DeleteMapping("/bases/{id}/memories/{memoryId}")
+    public Map<String, Object> deleteMemory(HttpServletRequest request, @PathVariable String id, @PathVariable String memoryId) {
+        MemoryBaseEntity base = getOwned(request, id);
+        MemoryItemEntity item = itemRepository.findById(memoryId)
+                .filter(candidate -> base.getTenantId().equals(candidate.getTenantId()) && base.getId().equals(candidate.getMemoryBaseId()))
+                .orElseThrow(() -> new EntityNotFoundException("Memory not found: " + memoryId));
+        itemRepository.delete(item);
+        base.setMemoryCount((int) itemRepository.countByTenantIdAndMemoryBaseId(base.getTenantId(), base.getId()));
+        repository.save(base);
+        return Map.of("status", "deleted");
     }
 
     @GetMapping("/bases/{id}/stats")
     public Map<String, Object> stats(HttpServletRequest request, @PathVariable String id) {
         MemoryBaseEntity entity = getOwned(request, id);
         long total = itemRepository.countByTenantIdAndMemoryBaseId(entity.getTenantId(), entity.getId());
-        return Map.of("total", total, "memory_count", total, "trait_count", entity.getTraitCount());
+        Map<String, Long> byType = new LinkedHashMap<>();
+        for (MemoryItemEntity item : itemRepository.findByTenantIdAndMemoryBaseIdOrderByCreatedAtDesc(entity.getTenantId(), entity.getId())) {
+            byType.merge(item.getMemoryType(), 1L, Long::sum);
+        }
+        return Map.of("total", total, "memory_count", total, "trait_count", entity.getTraitCount(), "by_type", byType);
+    }
+
+    @PostMapping("/bases/{id}/digest")
+    public Map<String, Object> digest(HttpServletRequest request, @PathVariable String id) {
+        getOwned(request, id);
+        return Map.of("traits_generated", 0, "unreflected_count", 0);
+    }
+
+    @PostMapping("/bases/{id}/digest_extracted")
+    public Map<String, Object> digestExtracted(HttpServletRequest request, @PathVariable String id, @RequestBody Map<String, Object> body) {
+        MemoryBaseEntity base = getOwned(request, id);
+        Object rawData = body.get("data");
+        Map<?, ?> data = rawData instanceof Map<?, ?> map ? map : Map.of();
+        Object traits = data.get("traits");
+        int count = traits instanceof List<?> list ? list.size() : 0;
+        base.setTraitCount(base.getTraitCount() + count);
+        repository.save(base);
+        return Map.of("traits_stored", count);
     }
 
     @GetMapping("/bases/{id}/traits")
@@ -194,6 +274,83 @@ public class MemoryController {
         return value == null ? "" : value;
     }
 
+    private String blankDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String required(Map<String, Object> body, String key) {
+        String value = string(body, key);
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, key + " is required");
+        }
+        return value;
+    }
+
+    private void storeExtracted(MemoryBaseEntity base, Map<?, ?> data, String key, String type, String countKey, Map<String, Object> counts) {
+        Object rawItems = data.get(key);
+        int count = 0;
+        if (rawItems instanceof List<?> items) {
+            for (Object raw : items) {
+                if (raw instanceof Map<?, ?> itemMap) {
+                    Object content = itemMap.get("content");
+                    if (content == null || content.toString().isBlank()) continue;
+                    MemoryItemEntity item = new MemoryItemEntity();
+                    item.setTenantId(base.getTenantId());
+                    item.setMemoryBaseId(base.getId());
+                    item.setMemoryType(type);
+                    item.setMemory(content.toString());
+                    item.setMetadataJson(toJson(itemMap));
+                    itemRepository.save(item);
+                    count++;
+                }
+            }
+        }
+        counts.put(countKey, count);
+    }
+
+    private java.util.Set<String> stringSet(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> set = new java.util.LinkedHashSet<>();
+        for (Object item : list) {
+            if (item != null && !item.toString().isBlank()) {
+                set.add(item.toString());
+            }
+        }
+        return set;
+    }
+
+    private int intValue(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value != null) {
+            try {
+                return Integer.parseInt(value.toString());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return fallback;
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value == null ? Map.of() : value);
+        } catch (Exception ignored) {
+            return "{}";
+        }
+    }
+
+    private Map<String, Object> readJson(String json) {
+        try {
+            Object value = objectMapper.readValue(json == null || json.isBlank() ? "{}" : json, Object.class);
+            return value instanceof Map<?, ?> map ? new LinkedHashMap<>((Map<String, Object>) map) : new LinkedHashMap<>();
+        } catch (Exception ignored) {
+            return new LinkedHashMap<>();
+        }
+    }
+
     private Map<String, Object> memoryResponse(MemoryItemEntity item) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", item.getId());
@@ -202,7 +359,11 @@ public class MemoryController {
         map.put("memory", item.getMemory());
         map.put("content", item.getMemory());
         map.put("source", item.getSource());
-        map.put("metadata", LbfsMemoryController.metadata(item.getSource(), item.getMemory()));
+        Map<String, Object> metadata = readJson(item.getMetadataJson());
+        if (item.getSource() != null && !item.getSource().isBlank()) {
+            metadata.putAll(LbfsMemoryController.metadata(item.getSource(), item.getMemory()));
+        }
+        map.put("metadata", metadata);
         map.put("created_at", item.getCreatedAt() != null ? item.getCreatedAt().toString() : null);
         return map;
     }

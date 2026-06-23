@@ -33,6 +33,9 @@ public class LbfsMemoryController {
         String encoded = required(body, "data_base64");
         byte[] bytes = Base64.getDecoder().decode(encoded);
         String content = new String(bytes, StandardCharsets.UTF_8);
+        if (isViewFile(path)) {
+            return Map.of("path", path, "etag", etag(content), "status", "ignored");
+        }
         MemoryBaseEntity base = targetBase(tenantId);
 
         MemoryItemEntity item = itemRepository.findByTenantIdAndMemoryBaseIdAndSource(tenantId, base.getId(), path)
@@ -50,10 +53,34 @@ public class LbfsMemoryController {
         return Map.of("path", path, "etag", etag(content), "memory_id", saved.getId(), "base_id", base.getId());
     }
 
+    @PostMapping("/files/delete")
+    public Map<String, Object> delete(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String path = required(body, "path");
+        MemoryBaseEntity base = targetBase(tenantId);
+        itemRepository.findByTenantIdAndMemoryBaseIdAndSource(tenantId, base.getId(), path)
+                .ifPresent(itemRepository::delete);
+        base.setMemoryCount((int) itemRepository.countByTenantIdAndMemoryBaseId(tenantId, base.getId()));
+        baseRepository.save(base);
+        return Map.of("path", path, "status", "deleted");
+    }
+
     @GetMapping("/memory-target")
     public Map<String, Object> memoryTarget(HttpServletRequest request) {
         MemoryBaseEntity base = targetBase(TenantResolver.resolve(request));
         return Map.of("base_id", base.getId(), "memory_base_id", base.getId());
+    }
+
+    @PostMapping("/memory-target")
+    public Map<String, Object> setMemoryTarget(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String baseId = required(body, "base_id");
+        MemoryBaseEntity base = baseRepository.findByIdAndTenantId(baseId, tenantId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Memory base not found: " + baseId));
+        base.setType("LBFS_DERIVED");
+        base.setScene("LBFS");
+        MemoryBaseEntity saved = baseRepository.save(base);
+        return Map.of("base_id", saved.getId(), "memory_base_id", saved.getId());
     }
 
     private MemoryBaseEntity targetBase(String tenantId) {
@@ -87,6 +114,10 @@ public class LbfsMemoryController {
         } catch (Exception e) {
             return Integer.toHexString(content.hashCode());
         }
+    }
+
+    private boolean isViewFile(String path) {
+        return "/memory/MEMORY.md".equals(path) || path.endsWith("/memory/MEMORY.md");
     }
 
     static Map<String, Object> metadata(String source, String content) {

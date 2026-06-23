@@ -33,6 +33,9 @@ public class MemoryItemEntity {
     @Column(length = 128)
     private String source;
 
+    @Column(name = "metadata_json", columnDefinition = "text")
+    private String metadataJson;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -54,5 +57,7 @@ public class MemoryItemEntity {
     public void setMemory(String memory) { this.memory = memory; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+    public String getMetadataJson() { return metadataJson; }
+    public void setMetadataJson(String metadataJson) { this.metadataJson = metadataJson; }
     public Instant getCreatedAt() { return createdAt; }
 }

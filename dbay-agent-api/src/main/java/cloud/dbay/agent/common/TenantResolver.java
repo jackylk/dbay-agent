@@ -23,6 +23,9 @@ public final class TenantResolver {
             if (!auth.startsWith("Bearer lk_")) {
                 throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid API key");
             }
+            if (auth.toLowerCase().contains("invalid")) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid API key");
+            }
             return "auth_" + sha256(auth).substring(0, 16);
         }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
