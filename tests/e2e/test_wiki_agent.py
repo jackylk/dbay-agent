@@ -23,8 +23,9 @@ import pytest
 # Allow importing dbay_cli without pip install -e (same pattern as test_wiki.py)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "dbay-cli"))
 from dbay_cli.client import DbayClient  # noqa: E402
+from conftest import ENDPOINT as DEFAULT_ENDPOINT  # noqa: E402
 
-ENDPOINT = os.environ.get("DBAY_ENDPOINT", "https://api.dbay.cloud:8443")
+ENDPOINT = os.environ.get("DBAY_ENDPOINT", os.environ.get("DBAY_AGENT_ENDPOINT", DEFAULT_ENDPOINT))
 BASE = f"{ENDPOINT}/api/v1"
 ADMIN_TOKEN = os.environ.get("DBAY_ADMIN_TOKEN", "lakeon-sre-2026")
 DOC_DIR = Path(os.environ.get("KB_DOC_DIR", str(Path.home() / "code" / "kb-doc")))

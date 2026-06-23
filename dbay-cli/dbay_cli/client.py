@@ -22,7 +22,7 @@ class DbayClient:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self.extra_headers = extra_headers or {}
-        self.http = httpx.Client(verify=False, timeout=300)
+        self.http = httpx.Client(verify=False, timeout=300, trust_env=False)
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -35,7 +35,7 @@ class DbayClient:
         return f"{self.endpoint}/api/v1{path}"
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
-        resp = self.http.request(method, self._url(path), headers=self._headers(), **kwargs)
+        resp = self._send(method, path, **kwargs)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
@@ -48,7 +48,22 @@ class DbayClient:
 
     def _request_raw(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Returns raw response without raising exceptions. For tests to check status codes."""
-        return self.http.request(method, self._url(path), headers=self._headers(), **kwargs)
+        return self._send(method, path, **kwargs)
+
+    def _send(self, method: str, path: str, **kwargs) -> httpx.Response:
+        last_error: Exception | None = None
+        for attempt in range(4):
+            try:
+                resp = self.http.request(method, self._url(path), headers=self._headers(), **kwargs)
+                if resp.status_code not in (502, 503, 504):
+                    return resp
+            except httpx.TransportError as exc:
+                last_error = exc
+            if attempt < 3:
+                time.sleep(0.5 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
+        return resp
 
     def post(self, path: str, **kwargs) -> httpx.Response:
         """Raw POST returning the underlying httpx.Response (no exception on non-2xx)."""
