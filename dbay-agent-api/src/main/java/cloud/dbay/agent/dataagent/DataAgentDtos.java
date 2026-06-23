@@ -34,21 +34,36 @@ public final class DataAgentDtos {
             @JsonProperty("harness_id") String harnessId,
             String status,
             @JsonProperty("agent_app_id") String agentAppId,
+            @JsonProperty("current_stage_id") String currentStageId,
+            @JsonProperty("workspace_id") String workspaceId,
             @JsonProperty("branch_count") long branchCount,
             @JsonProperty("evidence_count") long evidenceCount,
             @JsonProperty("audit_event_count") long auditEventCount,
+            @JsonProperty("latest_branch_id") String latestBranchId,
+            @JsonProperty("latest_evidence_packet_id") String latestEvidencePacketId,
+            @JsonProperty("latest_audit_result") String latestAuditResult,
             @JsonProperty("created_at") Instant createdAt
     ) {
         @JsonProperty("harnessId")
         public String harnessIdCamel() { return harnessId; }
         @JsonProperty("agentAppId")
         public String agentAppIdCamel() { return agentAppId; }
+        @JsonProperty("currentStageId")
+        public String currentStageIdCamel() { return currentStageId; }
+        @JsonProperty("workspaceId")
+        public String workspaceIdCamel() { return workspaceId; }
         @JsonProperty("branchCount")
         public long branchCountCamel() { return branchCount; }
         @JsonProperty("evidenceCount")
         public long evidenceCountCamel() { return evidenceCount; }
         @JsonProperty("auditEventCount")
         public long auditEventCountCamel() { return auditEventCount; }
+        @JsonProperty("latestBranchId")
+        public String latestBranchIdCamel() { return latestBranchId; }
+        @JsonProperty("latestEvidencePacketId")
+        public String latestEvidencePacketIdCamel() { return latestEvidencePacketId; }
+        @JsonProperty("latestAuditResult")
+        public String latestAuditResultCamel() { return latestAuditResult; }
         @JsonProperty("createdAt")
         public Instant createdAtCamel() { return createdAt; }
     }
@@ -76,7 +91,9 @@ public final class DataAgentDtos {
     public record CreateAgentAppRequest(
             @NotBlank String key,
             @JsonProperty("display_name") @JsonAlias("displayName") @NotBlank String displayName,
-            String type
+            String type,
+            String version,
+            @JsonProperty("stage_schema") @JsonAlias("stageSchema") List<String> stageSchema
     ) {}
 
     public record AgentAppResponse(
@@ -84,11 +101,15 @@ public final class DataAgentDtos {
             String key,
             @JsonProperty("display_name") String displayName,
             String type,
+            String version,
             String status,
+            @JsonProperty("stage_schema") List<String> stageSchema,
             @JsonProperty("created_at") Instant createdAt
     ) {
         @JsonProperty("displayName")
         public String displayNameCamel() { return displayName; }
+        @JsonProperty("stageSchema")
+        public List<String> stageSchemaCamel() { return stageSchema; }
     }
 
     public record CreateAgentAppRunRequest(

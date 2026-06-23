@@ -39,6 +39,11 @@ public class DataAgentController {
         return service.listAgentApps(tenantKeyResolver.resolve(request));
     }
 
+    @GetMapping("/apps/{appId}")
+    public DataAgentDtos.AgentAppResponse getAgentApp(HttpServletRequest request, @PathVariable String appId) {
+        return service.getAgentApp(tenantKeyResolver.resolve(request), appId);
+    }
+
     @PostMapping("/apps/{appId}/runs")
     @ResponseStatus(HttpStatus.CREATED)
     public DataAgentDtos.TaskRunResponse createAgentAppRun(

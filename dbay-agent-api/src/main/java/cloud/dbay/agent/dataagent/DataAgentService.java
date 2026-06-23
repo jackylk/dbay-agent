@@ -3,6 +3,7 @@ package cloud.dbay.agent.dataagent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DataAgentService {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {};
+    private static final List<BuiltInAgentApp> BUILT_IN_APPS = List.of(
+            new BuiltInAgentApp("data-agent", "Data Agent", "agent",
+                    List.of("plan", "query", "validate", "report")),
+            new BuiltInAgentApp("paperbench", "论文复现实验助手", "benchmark",
+                    List.of("paper_parse", "claim_extract", "experiment_run", "evidence_pack", "report_gate")),
+            new BuiltInAgentApp("knowledge-curator", "知识库整理助手", "knowledge",
+                    List.of("ingest", "curate", "lint", "publish"))
+    );
 
     private final AgentTaskRunRepository taskRunRepository;
     private final AgentAuditEventRepository auditEventRepository;
@@ -42,15 +52,28 @@ public class DataAgentService {
         entity.setKey(request.key());
         entity.setDisplayName(request.displayName());
         if (request.type() != null && !request.type().isBlank()) entity.setType(request.type());
+        if (request.version() != null && !request.version().isBlank()) entity.setVersion(request.version());
+        entity.setStageSchemaJson(writeStringList(request.stageSchema() == null ? List.of() : request.stageSchema()));
         return toApp(appRepository.save(entity));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<DataAgentDtos.AgentAppResponse> listAgentApps(String tenantKey) {
-        return appRepository.findByTenantKeyOrderByCreatedAtAsc(tenantKey)
+        List<AgentAppEntity> apps = new ArrayList<>(appRepository.findByTenantKeyOrderByCreatedAtAsc(tenantKey));
+        if (apps.isEmpty()) {
+            for (BuiltInAgentApp builtIn : BUILT_IN_APPS) {
+                apps.add(appRepository.save(toEntity(tenantKey, builtIn)));
+            }
+        }
+        return apps
                 .stream()
                 .map(this::toApp)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public DataAgentDtos.AgentAppResponse getAgentApp(String tenantKey, String appId) {
+        return toApp(getApp(tenantKey, appId));
     }
 
     @Transactional
@@ -157,15 +180,35 @@ public class DataAgentService {
     private DataAgentDtos.TaskRunSummaryResponse toSummary(String tenantKey, AgentTaskRunEntity task) {
         long auditEventCount = auditEventRepository.countByTenantKeyAndTaskRunId(tenantKey, task.getId());
         long evidenceCount = evidencePacketRepository.countByTenantKeyAndTaskRunId(tenantKey, task.getId());
+        DataAgentDtos.WorkspaceResponse workspace = workspaceRepository.findByTenantKeyAndTaskRunId(tenantKey, task.getId())
+                .map(this::toWorkspace)
+                .orElse(null);
+        DataAgentDtos.EvidencePacketResponse latestEvidence = evidencePacketRepository
+                .findByTenantKeyAndTaskRunIdOrderByCreatedAtAsc(tenantKey, task.getId())
+                .stream()
+                .reduce((first, second) -> second)
+                .map(this::toEvidence)
+                .orElse(null);
+        DataAgentDtos.AuditEventResponse latestAudit = auditEventRepository
+                .findByTenantKeyAndTaskRunIdOrderByCreatedAtAsc(tenantKey, task.getId())
+                .stream()
+                .reduce((first, second) -> second)
+                .map(this::toAuditEvent)
+                .orElse(null);
         return new DataAgentDtos.TaskRunSummaryResponse(
                 task.getId(),
                 task.getGoal(),
                 task.getHarnessId(),
                 task.getStatus(),
                 task.getAgentAppId(),
-                0,
+                null,
+                workspace == null ? null : workspace.id(),
+                workspace == null ? 0 : 1,
                 evidenceCount,
                 auditEventCount,
+                workspace == null ? null : workspace.rootBranchId(),
+                latestEvidence == null ? null : latestEvidence.id(),
+                latestAudit == null ? null : String.valueOf(latestAudit.payload().getOrDefault("result", "")),
                 task.getCreatedAt()
         );
     }
@@ -177,7 +220,14 @@ public class DataAgentService {
 
     private DataAgentDtos.AgentAppResponse toApp(AgentAppEntity app) {
         return new DataAgentDtos.AgentAppResponse(
-                app.getId(), app.getKey(), app.getDisplayName(), app.getType(), app.getStatus(), app.getCreatedAt());
+                app.getId(),
+                app.getKey(),
+                app.getDisplayName(),
+                app.getType(),
+                app.getVersion(),
+                app.getStatus(),
+                readStringList(app.getStageSchemaJson()),
+                app.getCreatedAt());
     }
 
     private DataAgentDtos.WorkspaceResponse toWorkspace(AgentWorkspaceEntity workspace) {
@@ -212,6 +262,14 @@ public class DataAgentService {
         }
     }
 
+    private String writeStringList(List<String> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("invalid stage schema", ex);
+        }
+    }
+
     private Map<String, Object> readJson(String json) {
         if (json == null || json.isBlank()) {
             return Map.of();
@@ -222,4 +280,28 @@ public class DataAgentService {
             return Map.of("raw", json);
         }
     }
+
+    private List<String> readStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, STRING_LIST_TYPE);
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
+    private AgentAppEntity toEntity(String tenantKey, BuiltInAgentApp app) {
+        AgentAppEntity entity = new AgentAppEntity();
+        entity.setTenantKey(tenantKey);
+        entity.setKey(app.key());
+        entity.setDisplayName(app.displayName());
+        entity.setType(app.type());
+        entity.setVersion("0.1.0");
+        entity.setStageSchemaJson(writeStringList(app.stageSchema()));
+        return entity;
+    }
+
+    private record BuiltInAgentApp(String key, String displayName, String type, List<String> stageSchema) {}
 }

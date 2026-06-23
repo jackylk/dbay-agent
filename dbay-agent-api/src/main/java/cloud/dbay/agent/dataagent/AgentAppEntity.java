@@ -33,6 +33,12 @@ public class AgentAppEntity {
     @Column(length = 64)
     private String status = "active";
 
+    @Column(length = 64)
+    private String version = "0.1.0";
+
+    @Column(name = "stage_schema_json", columnDefinition = "TEXT")
+    private String stageSchemaJson;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -54,5 +60,9 @@ public class AgentAppEntity {
     public void setType(String type) { this.type = type; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getVersion() { return version; }
+    public void setVersion(String version) { this.version = version; }
+    public String getStageSchemaJson() { return stageSchemaJson; }
+    public void setStageSchemaJson(String stageSchemaJson) { this.stageSchemaJson = stageSchemaJson; }
     public Instant getCreatedAt() { return createdAt; }
 }

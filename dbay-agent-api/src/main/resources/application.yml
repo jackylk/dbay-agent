@@ -26,6 +26,8 @@ lakebase:
   service-token: ${LAKEBASE_SERVICE_TOKEN:}
 
 dbay-agent:
+  connector:
+    secret-key: ${DBAY_AGENT_CONNECTOR_SECRET_KEY:test-key-1234567890abcdef1234567}
   workloads:
     cluster-owner: ${DBAY_AGENT_WORKLOAD_CLUSTER_OWNER:dbay-agent}
     cluster-name: ${DBAY_AGENT_WORKLOAD_CLUSTER_NAME:dbay-agent-cce}
