@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +29,9 @@ public class KnowledgeController {
     private final KnowledgeChunkRepository chunkRepository;
     private final KnowledgeShareRepository shareRepository;
     private final ObjectMapper objectMapper;
+    private final Map<String, String> wikiSchemas = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, List<Map<String, Object>>> chatHistories = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, List<Map<String, Object>>> wikiRunLogs = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Object> wikiConfig = new java.util.concurrent.ConcurrentHashMap<>(Map.of(
             "model", "dbay-agent-local",
             "ingest_prompt", "Generate wiki pages from uploaded knowledge.",
@@ -190,6 +194,24 @@ public class KnowledgeController {
                 .toList();
     }
 
+    @GetMapping("/documents/stats")
+    public Map<String, Object> documentStats(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        List<KnowledgeDocumentEntity> docs = documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId);
+        long ready = docs.stream().filter(doc -> "READY".equalsIgnoreCase(doc.getStatus())).count();
+        long pending = docs.stream().filter(doc -> "PENDING".equalsIgnoreCase(doc.getStatus())).count();
+        long failed = docs.stream().filter(doc -> "FAILED".equalsIgnoreCase(doc.getStatus())).count();
+        long wikiReview = docs.stream().filter(doc -> "WIKI_REVIEW".equalsIgnoreCase(doc.getStatus())).count();
+        return Map.of(
+                "total", docs.size(),
+                "ready", ready,
+                "pending", pending,
+                "failed", failed,
+                "wiki_review", wikiReview
+        );
+    }
+
     @GetMapping("/documents/{id}")
     public Map<String, Object> getDocument(HttpServletRequest request, @PathVariable String id) {
         String tenantId = TenantResolver.resolve(request);
@@ -290,6 +312,7 @@ public class KnowledgeController {
             chunkRepository.save(chunk);
             doc.setStatus("READY");
             documentRepository.save(doc);
+            recordWikiRun(doc);
         }
         repository.findById(doc.getKbId()).ifPresent(kb -> {
             kb.setDocumentCount((int) documentRepository.countByTenantIdAndKbId(kb.getTenantId(), doc.getKbId()));
@@ -394,6 +417,123 @@ public class KnowledgeController {
         getAccessible(tenantId, kbId);
         String question = blankDefault(string(body, "question"), blankDefault(string(body, "message"), ""));
         return Map.of("answer", question.isBlank() ? "OK" : "Answer: " + question, "status", "ok");
+    }
+
+    @PostMapping(value = "/wiki/chat/agent", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public String wikiAgentChat(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String kbId = required(body, "kb_id");
+        getAccessible(tenantId, kbId);
+        long started = System.currentTimeMillis();
+        String question = blankDefault(string(body, "question"), blankDefault(string(body, "message"), ""));
+        List<String> events = new java.util.ArrayList<>();
+        events.add(sse(Map.of("type", "tool_call", "name", "list_pages", "kb_id", kbId)));
+        events.add(sse(Map.of("type", "tool_result", "name", "list_pages", "count", wikiPageCount(tenantId, kbId))));
+        events.add(sse(Map.of("type", "content", "content", question.isBlank() ? "OK" : "Answer: " + question)));
+        events.add(sse(Map.of(
+                "type", "done",
+                "status", "success",
+                "tool_calls_count", 1,
+                "duration_ms", Math.max(1, System.currentTimeMillis() - started)
+        )));
+        events.add("data: [DONE]\n\n");
+        return String.join("", events);
+    }
+
+    @GetMapping("/wiki/schema")
+    public Map<String, Object> getWikiSchema(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
+        String tenantId = TenantResolver.resolve(request);
+        getAccessible(tenantId, kbId);
+        return Map.of("content", wikiSchemas.computeIfAbsent(schemaKey(tenantId, kbId), ignored -> defaultSchema()));
+    }
+
+    @PutMapping("/wiki/schema")
+    public Map<String, Object> updateWikiSchema(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String kbId = required(body, "kb_id");
+        getAccessible(tenantId, kbId);
+        String content = required(body, "content");
+        wikiSchemas.put(schemaKey(tenantId, kbId), content);
+        return Map.of("content", content);
+    }
+
+    @GetMapping("/wiki/chat/history")
+    public List<Map<String, Object>> getWikiChatHistory(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
+        String tenantId = TenantResolver.resolve(request);
+        getAccessible(tenantId, kbId);
+        return chatHistories.getOrDefault(schemaKey(tenantId, kbId), List.of());
+    }
+
+    @PutMapping("/wiki/chat/history")
+    public List<Map<String, Object>> updateWikiChatHistory(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String kbId = required(body, "kb_id");
+        getAccessible(tenantId, kbId);
+        Object rawMessages = body.get("messages");
+        if (!(rawMessages instanceof List<?> messages)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "messages is required");
+        }
+        List<Map<String, Object>> saved = new java.util.ArrayList<>();
+        for (Object raw : messages) {
+            if (raw instanceof Map<?, ?> item) {
+                Map<String, Object> message = new LinkedHashMap<>();
+                item.forEach((key, value) -> message.put(String.valueOf(key), value));
+                saved.add(message);
+            }
+        }
+        chatHistories.put(schemaKey(tenantId, kbId), saved);
+        return saved;
+    }
+
+    @PostMapping("/wiki/batch-ingest")
+    public Map<String, Object> batchIngestWiki(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        String tenantId = TenantResolver.resolve(request);
+        String kbId = required(body, "kb_id");
+        getAccessible(tenantId, kbId);
+        Object rawIds = body.get("document_ids");
+        if (!(rawIds instanceof List<?> ids) || ids.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "document_ids is required");
+        }
+        int enqueued = 0;
+        for (Object rawId : ids) {
+            String docId = rawId == null ? "" : rawId.toString();
+            if (documentRepository.findByIdAndTenantId(docId, tenantId).filter(doc -> kbId.equals(doc.getKbId())).isPresent()) {
+                processDocument(request, docId);
+                enqueued++;
+            }
+        }
+        return Map.of("enqueued", enqueued);
+    }
+
+    @GetMapping("/bases/{kbId}/wiki/runlog")
+    public List<Map<String, Object>> wikiRunLog(HttpServletRequest request,
+                                                @PathVariable String kbId,
+                                                @RequestParam(name = "limit", defaultValue = "50") int limit) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        List<Map<String, Object>> logs = wikiRunLogs.getOrDefault(kb.getId(), List.of());
+        int to = Math.min(logs.size(), Math.max(0, limit));
+        return logs.subList(0, to);
+    }
+
+    @GetMapping("/bases/{kbId}/wiki/page-by-title")
+    public Map<String, Object> wikiPageByTitle(HttpServletRequest request,
+                                               @PathVariable String kbId,
+                                               @RequestParam String title) {
+        String tenantId = TenantResolver.resolve(request);
+        KnowledgeBaseEntity kb = getAccessible(tenantId, kbId);
+        if ("KB Schema".equalsIgnoreCase(title) || "schema.md".equalsIgnoreCase(title)) {
+            return Map.of("found", true, "filename", "schema.md", "title", "KB Schema", "content", defaultSchema());
+        }
+        return documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId).stream()
+                .filter(doc -> title.equalsIgnoreCase(doc.getTitle()) || title.equalsIgnoreCase(doc.getTitle().replaceFirst("\\.[^.]+$", "")))
+                .findFirst()
+                .map(doc -> {
+                    Map<String, Object> map = documentResponse(doc);
+                    map.put("found", true);
+                    return map;
+                })
+                .orElseGet(() -> Map.of("found", false));
     }
 
     @PostMapping("/wiki/save-response")
@@ -620,7 +760,10 @@ public class KnowledgeController {
 
     private void validateFilename(String filename) {
         String lower = filename == null ? "" : filename.toLowerCase();
-        if (!(lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt"))) {
+        if (!(lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt")
+                || lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc")
+                || lower.endsWith(".csv") || lower.endsWith(".json") || lower.endsWith(".jsonl")
+                || lower.endsWith(".sql"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported file format");
         }
     }
@@ -725,12 +868,52 @@ public class KnowledgeController {
         map.put("title", doc.getTitle());
         map.put("filename", doc.getTitle());
         map.put("format", "MARKDOWN");
+        map.put("doc_type", "wiki");
+        map.put("docType", "wiki");
         map.put("status", doc.getStatus());
         map.put("chunks_count", chunkRepository.countByTenantIdAndKbIdAndDocumentId(doc.getTenantId(), doc.getKbId(), doc.getId()));
         map.put("tags", readTags(doc.getTagsJson()));
         map.put("created_at", doc.getCreatedAt() != null ? doc.getCreatedAt().toString() : null);
         map.put("updated_at", doc.getUpdatedAt() != null ? doc.getUpdatedAt().toString() : null);
         return map;
+    }
+
+    private void recordWikiRun(KnowledgeDocumentEntity doc) {
+        List<Map<String, Object>> logs = wikiRunLogs.computeIfAbsent(doc.getKbId(), ignored -> new java.util.concurrent.CopyOnWriteArrayList<>());
+        Map<String, Object> log = new LinkedHashMap<>();
+        log.put("id", "run_" + doc.getId());
+        log.put("run_id", "run_" + doc.getId());
+        log.put("run_type", "ingest");
+        log.put("status", "success");
+        log.put("trigger_doc", doc.getTitle());
+        log.put("pages_created", 3);
+        log.put("pages_updated", 0);
+        log.put("error_message", null);
+        log.put("created_at", java.time.Instant.now().toString());
+        logs.removeIf(existing -> ("run_" + doc.getId()).equals(existing.get("id")));
+        logs.add(0, log);
+    }
+
+    private int wikiPageCount(String tenantId, String kbId) {
+        return repository.findByIdAndTenantId(kbId, tenantId)
+                .map(kb -> documentRepository.findByTenantIdAndKbIdOrderByCreatedAtDesc(kb.getTenantId(), kbId).size())
+                .orElse(0);
+    }
+
+    private String schemaKey(String tenantId, String kbId) {
+        return tenantId + ":" + kbId;
+    }
+
+    private String defaultSchema() {
+        return "# KB Schema\n\n## Glossary / 术语表\n\n- Concept: core wiki terms.\n";
+    }
+
+    private String sse(Map<String, Object> event) {
+        try {
+            return "data: " + objectMapper.writeValueAsString(event) + "\n\n";
+        } catch (Exception ignored) {
+            return "data: {\"type\":\"error\"}\n\n";
+        }
     }
 
     private Map<String, Object> chunkResponse(KnowledgeChunkEntity chunk) {
