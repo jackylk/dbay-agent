@@ -15,6 +15,7 @@ import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -127,10 +128,14 @@ public class DatasetController {
 
     private Map<String, Object> lakebaseQuery(HttpHeaders headers, String databaseId, String sql) {
         try {
+            HttpHeaders queryHeaders = new HttpHeaders();
+            queryHeaders.putAll(headers);
+            queryHeaders.setContentType(MediaType.APPLICATION_JSON);
+            queryHeaders.remove(HttpHeaders.CONTENT_LENGTH);
             ResponseEntity<byte[]> response = lakebaseClient.forward(
                     HttpMethod.POST,
                     "/databases/" + databaseId + "/query",
-                    headers,
+                    queryHeaders,
                     JsonMaps.stringify(Map.of("sql", sql)).getBytes(StandardCharsets.UTF_8));
             if (!response.getStatusCode().is2xxSuccessful()) {
                 throw new ResponseStatusException(response.getStatusCode(), "Lakebase query failed");
