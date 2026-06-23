@@ -23,10 +23,14 @@ public class AuthProxyController {
     public ResponseEntity<byte[]> login(HttpServletRequest request,
                                         @RequestHeader HttpHeaders headers,
                                         @RequestBody(required = false) byte[] body) throws IOException {
-        ResponseEntity<byte[]> response = lakebaseClient.forward(HttpMethod.POST, "/auth/login", headers, body);
-        if (response.getStatusCode().is5xxServerError()) {
+        try {
+            ResponseEntity<byte[]> response = lakebaseClient.forward(HttpMethod.POST, "/auth/login", headers, body);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                return ResponseEntity.status(401).body("{\"error\":\"Invalid username or password\"}".getBytes());
+            }
+            return response;
+        } catch (Exception e) {
             return ResponseEntity.status(401).body("{\"error\":\"Invalid username or password\"}".getBytes());
         }
-        return response;
     }
 }
