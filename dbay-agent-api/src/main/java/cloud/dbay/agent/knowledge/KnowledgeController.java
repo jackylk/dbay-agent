@@ -107,6 +107,15 @@ public class KnowledgeController {
         return documentResponse(saved);
     }
 
+    @PostMapping("/wiki/ingest-url")
+    public Map<String, Object> ingestUrl(HttpServletRequest request, @RequestBody Map<String, Object> body) {
+        Map<String, Object> payload = new LinkedHashMap<>(body);
+        payload.put("title", blankDefault(string(body, "title"), blankDefault(string(body, "url"), "Imported URL")));
+        payload.put("content", blankDefault(string(body, "content"), blankDefault(string(body, "url"), "")));
+        Map<String, Object> doc = ingest(request, payload);
+        return Map.of("document_id", doc.get("id"), "status", doc.get("status"));
+    }
+
     @GetMapping("/documents")
     public List<Map<String, Object>> listDocuments(HttpServletRequest request, @RequestParam(name = "kb_id") String kbId) {
         String tenantId = TenantResolver.resolve(request);
